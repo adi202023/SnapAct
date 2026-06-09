@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "SnapAct",
+    "slug": "snapact",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0A0A0A"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.snapact.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "SnapAct needs camera access to scan medicines, menus, bills, and documents.",
+        "NSLocationWhenInUseUsageDescription": "SnapAct uses location to provide locally relevant bill complaint URLs."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0A0A0A"
+      },
+      "package": "com.snapact.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "SnapAct needs camera access to scan and analyze content for you."
+        }
+      ]
+    ]
+  }
+}
