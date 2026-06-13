@@ -21,7 +21,6 @@ const callGeminiModel = async (modelName, requestBody) => {
 
 /**
  * Extracts the retry delay in ms from a 429 error response.
- * The API returns retryDelay as e.g. "51s" or "120s".
  */
 const getRetryDelayMs = (errorData) => {
   try {
@@ -33,14 +32,11 @@ const getRetryDelayMs = (errorData) => {
       return isNaN(seconds) ? 15000 : seconds * 1000;
     }
   } catch (_) {}
-  return 15000; // default 15s if parsing fails
+  return 15000;
 };
 
 /**
  * Tries each model in GEMINI_MODELS in order.
- * On 429 → waits the exact retryDelay the API specifies, then tries next model.
- * On any other error → tries next model immediately.
- * Returns the raw response text on success, or null on total failure.
  */
 const callGeminiWithRotation = async (requestBody) => {
   for (let i = 0; i < GEMINI_MODELS.length; i++) {
@@ -51,7 +47,6 @@ const callGeminiWithRotation = async (requestBody) => {
     if (ok) {
       const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) return text;
-      // Empty response from this model — try next
       console.warn(`[SnapAct] ${model} returned empty text, trying next model...`);
       continue;
     }
@@ -61,10 +56,8 @@ const callGeminiWithRotation = async (requestBody) => {
       const nextModel = GEMINI_MODELS[i + 1];
       if (nextModel) {
         console.warn(`[SnapAct] ${model} rate limited (${waitMs}ms). Switching to ${nextModel}...`);
-        // Small pause before switching — no need to wait the full delay when we have another model
         await new Promise((r) => setTimeout(r, 1000));
       } else {
-        // Last model — wait as instructed then retry the first model once more
         console.warn(`[SnapAct] All models tried. Waiting ${waitMs}ms then retrying ${GEMINI_MODELS[0]}...`);
         await new Promise((r) => setTimeout(r, waitMs));
         const retry = await callGeminiModel(GEMINI_MODELS[0], requestBody);
@@ -75,7 +68,6 @@ const callGeminiWithRotation = async (requestBody) => {
       continue;
     }
 
-    // Other errors (404 model not found, 400 bad request, etc.) — log and try next
     if (status === 0) {
       console.warn(`[SnapAct] ${model} network error (offline):`, data?.error?.message);
     } else {
@@ -86,15 +78,77 @@ const callGeminiWithRotation = async (requestBody) => {
 };
 
 /**
- * Builds a context-aware text prompt for Gemini based on user profile and scan mode.
+ * Helper to identify medical report text keywords
  */
-const buildTextPrompt = (extractedText, userProfile, scanMode) => {
+const isMedicalReportText = (text) => {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return (
+    lower.includes('glucose') ||
+    lower.includes('hba1c') ||
+    lower.includes('cholesterol') ||
+    lower.includes('mg/dl') ||
+    lower.includes('mmhg') ||
+    (lower.includes('blood') && lower.includes('pressure'))
+  );
+};
+
+/**
+ * Validates that all critical fields are returned from LLM
+ */
+const validateRequiredFields = (parsed) => {
+  const detected = parsed?.detected;
+  const status = parsed?.status;
+  const insight = parsed?.insight;
+  const recommendation = parsed?.recommendation || parsed?.action;
+  
+  if (!detected || !status || !insight || !recommendation) {
+    return false;
+  }
+  return true;
+};
+
+/**
+ * Recovers partial fields from a truncated or messy JSON response
+ */
+const attemptPartialRecovery = (rawText, scanMode) => {
+  const firstBrace = rawText.indexOf('{');
+  const partial = firstBrace !== -1 ? rawText.slice(firstBrace) : rawText;
+  
+  const detectedMatch = partial.match(/"detected"\s*:\s*"([^"]+)"/);
+  const statusMatch   = partial.match(/"status"\s*:\s*"([^"]+)"/);
+  const insightMatch  = partial.match(/"insight"\s*:\s*"([^"]+)"/);
+  const tempSolMatch  = partial.match(/"temporarySolution"\s*:\s*"([^"]+)"/);
+  const recMatch      = partial.match(/"recommendation"\s*:\s*"([^"]+)"/);
+  const actionMatch   = partial.match(/"action"\s*:\s*"([^"]+)"/);
+  const buddyMatch    = partial.match(/"buddyNote"\s*:\s*"([^"]+)"/);
+  const objTypeMatch  = partial.match(/"objectType"\s*:\s*"([^"]+)"/);
+
+  return {
+    detected:          detectedMatch?.[1]  || '',
+    status:            statusMatch?.[1]    || '',
+    insight:           insightMatch?.[1]   || '',
+    recommendation:    recMatch?.[1] || actionMatch?.[1] || '',
+    temporarySolution: tempSolMatch?.[1]   || '',
+    buddyNote:         buddyMatch?.[1]     || '',
+    action:            actionMatch?.[1]    || 'Consult Expert',
+    actionType:        'none',
+    actionPayload:     '',
+    scanMode,
+    objectType:        objTypeMatch?.[1]   || 'normal',
+  };
+};
+
+/**
+ * Builds a context-aware text prompt for Gemini.
+ */
+const buildTextPrompt = (extractedText, userProfile, scanMode, buddyContext = '') => {
   const medicines = userProfile?.medicines?.join(', ') || 'None listed';
   const allergies = userProfile?.allergies?.join(', ') || 'None listed';
   const language = userProfile?.language || 'English';
   const emergencyName = userProfile?.emergencyContact?.name || 'Not set';
 
-  return `You are SnapAct, a personal AI assistant embedded in a phone camera app.
+  let prompt = `You are SnapAct, a personal AI assistant embedded in a phone camera app.
 The user has shared their personal profile:
 - Medicines they currently take: ${medicines}
 - Allergies (food, drug, environmental): ${allergies}
@@ -117,40 +171,37 @@ Instructions:
 - For actionPayload in whatsapp type, write a complete ready-to-send WhatsApp message.
 - For actionPayload in url type, provide a real working URL.
 
-STEP 3 — Always provide a temporary solution:
-- Broken object → what can be done RIGHT NOW to temporarily fix or stabilize it
-- Dirty object → quickest immediate cleaning method with whatever is available at home
-- Medicine danger → what to do immediately before reaching a doctor
-- Food allergen → immediate precaution steps
-- Bill/Document issue → immediate protective action before consulting an expert
-- Any scan → always give a "do this right now" answer, no matter what
-Keep it simple, practical, doable within 5 minutes with household items.
-
-Respond in STRICT JSON format only. No markdown. No code blocks. No explanation outside JSON. Return only a single valid JSON object:
+Respond in STRICT JSON format only. No markdown. No code blocks. Return only a single valid JSON object:
 {
   "detected": "what was detected — one concise line",
   "status": "danger" or "warning" or "safe",
   "insight": "what this means specifically for THIS user based on their exact profile — 2 to 3 sentences, highly personal",
-  "temporarySolution": "an immediate quick-fix or temporary workaround the user can do RIGHT NOW with household items or bare hands — no special tools needed. If it's a medicine/food/document, give a temporary precaution or immediate action to take until proper help is available. Always provide this regardless of object type.",
+  "temporarySolution": "an immediate quick-fix or temporary workaround the user can do RIGHT NOW with household items or bare hands — always provide this regardless of object type.",
+  "buddyNote": "one short friendly sentence or empty string (only populate if BUDDY CONTEXT shows this item conflicts with their profile or is unhealthy to repeat)",
   "action": "the single most important action label — short, imperative (e.g. Alert My Doctor)",
   "actionType": "whatsapp" or "url" or "none",
   "actionPayload": "the complete WhatsApp message text or full URL to open, or empty string",
-  "scanMode": "${scanMode}"
+  "scanMode": "${scanMode}",
+  "objectType": "normal or medical_report"
 }`;
+
+  if (buddyContext) {
+    prompt += `\n\n${buddyContext}`;
+  }
+
+  return prompt;
 };
 
 /**
- * Builds a unified prompt for Gemini Vision that does EVERYTHING in one shot:
- * reads text, identifies the object, evaluates its condition, and generates advice.
- * This is the only prompt needed — one API call per scan.
+ * Builds a prompt for Gemini Vision that does EVERYTHING in one shot.
  */
-const buildImagePrompt = (userProfile, scanMode) => {
+const buildImagePrompt = (userProfile, scanMode, buddyContext = '') => {
   const medicines = userProfile?.medicines?.join(', ') || 'None listed';
   const allergies = userProfile?.allergies?.join(', ') || 'None listed';
   const language = userProfile?.language || 'English';
   const emergencyName = userProfile?.emergencyContact?.name || 'Not set';
 
-  return `You are SnapAct, a personal AI assistant embedded in a phone camera app.
+  let prompt = `You are SnapAct, a personal AI assistant embedded in a phone camera app.
 The user's profile:
 - Current medicines: ${medicines}
 - Allergies: ${allergies}
@@ -171,6 +222,18 @@ STEP 2 — Analyze in context of user profile:
 - Auto/Object mode: assess condition and recommend action
 - Cross-reference the user's medicines and allergies even for objects (e.g. mould → respiratory risk if user has asthma)
 
+SPECIAL CLINICAL NOTE: If you detect medical report content in the image (like glucose, BP, HbA1c, cholesterol, mg/dL, mmHg patterns) during document/medicine/auto scans:
+- Set 'objectType' to 'medical_report'
+- Set 'detected' to 'Medical Report — [1-line summary, e.g. High Sugar & BP]'
+- Set 'recommendation' to exactly 3 to 4 short actionable lines separated by \\n (no bullet characters like '*' or '•'):
+  Line 1: Key finding (e.g. "Blood sugar high at 180 — target under 140")
+  Line 2: What to avoid + quantity (e.g. "Cut rice to 1 cup/meal, avoid sugar after 6pm")
+  Line 3: What to add (e.g. "Add 30min walk after dinner, more leafy greens")
+  Line 4 (only if critical): "See doctor within X days"
+- Set 'action' to 'Consult Doctor'
+- Set 'actionType' to 'whatsapp'
+- Set 'actionPayload' to a brief summary message for the doctor
+
 STEP 3 — Always give a temporary solution:
 - Broken/damaged object → what to do RIGHT NOW with bare hands or household items
 - Dirty object → fastest cleaning method available at home
@@ -190,26 +253,96 @@ Respond in STRICT JSON only. No markdown. No code fences. Return ONLY a single v
   "urgency": "immediate / soon / low",
   "status": "danger / warning / safe",
   "insight": "2-3 sentences personalised to THIS user's profile — highly specific, never generic",
+  "buddyNote": "one short friendly sentence or empty string (only populate if BUDDY CONTEXT shows this item conflicts with their profile or is unhealthy to repeat)",
   "action": "single most important action label — short imperative phrase",
   "actionType": "whatsapp / url / none",
   "actionPayload": "complete WhatsApp message or full URL, or empty string",
-  "scanMode": "${scanMode}"
+  "scanMode": "${scanMode}",
+  "objectType": "normal or medical_report"
+}`;
+
+  if (buddyContext) {
+    prompt += `\n\n${buddyContext}`;
+  }
+
+  return prompt;
+};
+
+/**
+ * Prompt builder for Medical Reports
+ */
+const buildMedicalReportPrompt = (extractedText, userProfile) => {
+  const medicines = userProfile?.medicines?.join(', ') || 'None listed';
+  const allergies = userProfile?.allergies?.join(', ') || 'None listed';
+  const language = userProfile?.language || 'English';
+
+  return `You are SnapAct, a personal medical report analyzer.
+User Profile:
+- Medicines: ${medicines}
+- Allergies: ${allergies}
+- Language: ${language}
+
+Analyze the following health report metrics:
+"${extractedText}"
+
+Identify abnormal health metrics in this report. For the recommendation field, write SHORT actionable lines (max 4 lines total, plain text with \n line breaks, no bullet symbols like '*' or '•'):
+Line 1: Key finding (e.g. "Blood sugar high at 180 — target under 140")
+Line 2: What to avoid + quantity (e.g. "Cut rice to 1 cup/meal, avoid sugar after 6pm")
+Line 3: What to add (e.g. "Add 30min walk after dinner, more leafy greens")
+Line 4 (only if critical): "See doctor within X days"
+
+Respond in STRICT JSON format only. No markdown. No code blocks. Return only a single valid JSON object:
+{
+  "detected": "Medical Report — [1-line summary, e.g. 'High Sugar & BP']",
+  "objectType": "medical_report",
+  "status": "warning" or "danger" or "safe",
+  "insight": "2 sentences max — what this means for the user",
+  "recommendation": "the 3-4 line plan described above, \\n separated",
+  "temporarySolution": "single most urgent action for today",
+  "buddyNote": "",
+  "action": "Consult Doctor",
+  "actionType": "whatsapp",
+  "actionPayload": "brief summary message for doctor"
 }`;
 };
 
 /**
- * Analyzes an image directly with Gemini Vision (no separate OCR step needed).
- * This is the preferred method — single API call, more accurate than OCR → text → analysis.
- *
- * @param {string} base64Image - The base64-encoded image (without data: prefix)
- * @param {object} userProfile  - User profile from AsyncStorage
- * @param {string} scanMode     - One of: Medicine, Food/Menu, Bill, Document, Auto
- * @returns {object} Parsed Gemini result or a fallback error object
+ * Specific method to analyze medical reports
  */
-export const analyzeImageWithContext = async (base64Image, userProfile, scanMode) => {
+export const analyzeMedicalReport = async (extractedText, userProfile) => {
   try {
-    const prompt = buildImagePrompt(userProfile, scanMode);
+    const prompt = buildMedicalReportPrompt(extractedText, userProfile);
+    const requestBody = {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.2, maxOutputTokens: 1000 },
+    };
 
+    const rawText = await callGeminiWithRotation(requestBody);
+    console.log('[SnapAct] RAW medical report response:', rawText);
+
+    if (!rawText) return { isError: true };
+
+    const firstBrace = rawText.indexOf('{');
+    const lastBrace = rawText.lastIndexOf('}');
+    if (firstBrace === -1 || lastBrace === -1) return { isError: true };
+
+    const parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1));
+    if (!validateRequiredFields(parsed)) {
+      return { isError: true };
+    }
+    return parsed;
+  } catch (error) {
+    console.error('geminiService.analyzeMedicalReport error:', error);
+    return { isError: true };
+  }
+};
+
+/**
+ * Analyzes an image directly with Gemini Vision.
+ */
+export const analyzeImageWithContext = async (base64Image, userProfile, scanMode, buddyContext = '') => {
+  try {
+    const prompt = buildImagePrompt(userProfile, scanMode, buddyContext);
     const requestBody = {
       contents: [
         {
@@ -223,7 +356,7 @@ export const analyzeImageWithContext = async (base64Image, userProfile, scanMode
         temperature: 0.3,
         topK: 40,
         topP: 0.95,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 1000, // Explicitly set to 1000 to prevent truncation errors
       },
       safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -233,77 +366,84 @@ export const analyzeImageWithContext = async (base64Image, userProfile, scanMode
       ],
     };
 
-    // Try each model in rotation — automatically switches on 429 rate-limit errors
     const rawText = await callGeminiWithRotation(requestBody);
+    console.log('[SnapAct] RAW model response:', rawText);
 
     if (!rawText) {
-      console.warn('geminiService: All models failed or returned empty responses.');
-      return buildFallbackResult(scanMode, 'All AI models are currently busy. Please try again in a minute.');
+      console.warn('geminiService: Empty response.');
+      return { isError: true };
     }
 
-    // Robustly extract JSON — handles markdown fences, preamble text, and truncation.
-    const firstBrace = rawText.indexOf('{');
-    if (firstBrace === -1) {
-      console.warn('geminiService: No JSON found in response:', rawText.slice(0, 200));
-      return buildFallbackResult(scanMode, 'AI response was not in expected format.');
+    let parsed;
+    try {
+      const firstBrace = rawText.indexOf('{');
+      const lastBrace = rawText.lastIndexOf('}');
+      if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+        throw new Error('Missing JSON braces');
+      }
+      parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1));
+    } catch (e) {
+      console.warn('[SnapAct] Initial parse failed. Retrying once with JSON strict prompt...');
+      
+      const retryRequestBody = {
+        ...requestBody,
+        contents: [
+          {
+            parts: [
+              { text: prompt + '\n\nRespond with ONLY the JSON object, nothing else' },
+              { inline_data: { mime_type: 'image/jpeg', data: base64Image } },
+            ],
+          },
+        ],
+      };
+
+      const retryRawText = await callGeminiWithRotation(retryRequestBody);
+      console.log('[SnapAct] RAW model response (retry):', retryRawText);
+
+      try {
+        const firstBrace = retryRawText.indexOf('{');
+        const lastBrace = retryRawText.lastIndexOf('}');
+        if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+          throw new Error('Retry missing JSON braces');
+        }
+        parsed = JSON.parse(retryRawText.slice(firstBrace, lastBrace + 1));
+      } catch (retryErr) {
+        console.warn('[SnapAct] Retry parse failed too. Attempting partial recovery...');
+        parsed = attemptPartialRecovery(rawText, scanMode);
+      }
     }
 
-    const lastBrace = rawText.lastIndexOf('}');
-    if (lastBrace !== -1 && lastBrace > firstBrace) {
-      return JSON.parse(rawText.slice(firstBrace, lastBrace + 1));
+    if (!validateRequiredFields(parsed)) {
+      console.warn('[SnapAct] Missing required fields in parsed result.');
+      return { isError: true };
     }
 
-    // Truncated — recover partial fields
-    console.warn('geminiService: Truncated response, attempting partial recovery...');
-    const partial = rawText.slice(firstBrace);
-    const detectedMatch = partial.match(/"detected"\s*:\s*"([^"]+)"/);
-    const statusMatch   = partial.match(/"status"\s*:\s*"([^"]+)"/);
-    const insightMatch  = partial.match(/"insight"\s*:\s*"([^"]+)"/);
-    const tempSolMatch  = partial.match(/"temporarySolution"\s*:\s*"([^"]+)"/);
-    return {
-      detected:          detectedMatch?.[1]  || 'Item detected',
-      status:            statusMatch?.[1]    || 'warning',
-      insight:           insightMatch?.[1]   || 'Analysis was incomplete. Please try scanning again.',
-      temporarySolution: tempSolMatch?.[1]   || 'Take appropriate precautions.',
-      action: 'Try Again',
-      actionType: 'none',
-      actionPayload: '',
-      scanMode,
-    };
+    return parsed;
   } catch (error) {
-    if (error.message?.toLowerCase().includes('network') || error.message?.toLowerCase().includes('fetch')) {
-      console.warn('geminiService.analyzeImageWithContext offline/network warning:', error.message);
-    } else {
-      console.warn('geminiService.analyzeImageWithContext error:', error);
-    }
-    return buildFallbackResult(scanMode, error.message);
+    console.error('geminiService.analyzeImageWithContext error:', error);
+    return { isError: true };
   }
 };
 
 /**
- * Sends extracted OCR text + user profile to Gemini and returns
- * a structured analysis result object. (Fallback for when image isn't available.)
- *
- * @param {string} extractedText - OCR text from the camera capture
- * @param {object} userProfile   - User profile from AsyncStorage
- * @param {string} scanMode      - One of: Medicine, Food/Menu, Bill, Document, Auto
- * @returns {object} Parsed Gemini result or a fallback error object
+ * Sends extracted OCR text + user profile to Gemini.
  */
-export const analyzeTextWithContext = async (extractedText, userProfile, scanMode = 'Auto') => {
+export const analyzeTextWithContext = async (extractedText, userProfile, scanMode = 'Auto', buddyContext = '') => {
   try {
-    const prompt = buildTextPrompt(extractedText, userProfile, scanMode);
+    // Detect medical report content and route to specialized analyzer
+    if ((scanMode === 'Document' || scanMode === 'Medicine' || scanMode === 'Auto') && isMedicalReportText(extractedText)) {
+      console.log('[SnapAct] Medical report signature detected. Routing to specialized health metric analyzer.');
+      return await analyzeMedicalReport(extractedText, userProfile);
+    }
 
+    const prompt = buildTextPrompt(extractedText, userProfile, scanMode, buddyContext);
     const requestBody = {
-      contents: [
-        {
-          parts: [{ text: prompt }],
-        },
-      ],
+      contents: [{ parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.3,
         topK: 40,
         topP: 0.95,
-        maxOutputTokens: 4096,
+        maxOutputTokens: 1000, // Explicitly set to 1000 to prevent truncation errors
       },
       safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
@@ -323,116 +463,121 @@ export const analyzeTextWithContext = async (extractedText, userProfile, scanMod
     });
 
     if (!response.ok) {
-      const errText = await response.text();
-      console.warn('geminiService: API responded with error:', errText);
-      return buildFallbackResult(scanMode, 'API error — could not analyze content.');
+      console.warn('geminiService: API error');
+      return { isError: true };
     }
 
     const json = await response.json();
     const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+    console.log('[SnapAct] RAW text response:', rawText);
 
-    if (!rawText) {
-      console.warn('geminiService: Empty response from Gemini');
-      return buildFallbackResult(scanMode, 'Empty response from AI.');
-    }
+    if (!rawText) return { isError: true };
 
-    // Robustly extract JSON — handles markdown fences, preamble text, and truncation.
-    const firstBrace = rawText.indexOf('{');
-    if (firstBrace === -1) {
-      console.warn('geminiService: No JSON object found in response:', rawText.slice(0, 200));
-      return buildFallbackResult(scanMode, 'AI response was not in expected format.');
-    }
-
-    const lastBrace = rawText.lastIndexOf('}');
-    let jsonStr;
-
-    if (lastBrace !== -1 && lastBrace > firstBrace) {
-      jsonStr = rawText.slice(firstBrace, lastBrace + 1);
-    } else {
-      console.warn('geminiService: Response appears truncated, attempting partial recovery...');
-      const partial = rawText.slice(firstBrace);
-      const detectedMatch = partial.match(/"detected"\s*:\s*"([^"]+)"/);
-      const statusMatch = partial.match(/"status"\s*:\s*"([^"]+)"/);
-      const insightMatch = partial.match(/"insight"\s*:\s*"([^"]+)"/);
-      const tempSolMatch = partial.match(/"temporarySolution"\s*:\s*"([^"]+)"/);
-      return {
-        detected: detectedMatch?.[1] || 'Item detected',
-        status: statusMatch?.[1] || 'warning',
-        insight: insightMatch?.[1] || 'Analysis was incomplete. Please try scanning again with better lighting.',
-        temporarySolution: tempSolMatch?.[1] || 'Take immediate precautions.',
-        action: 'Try Again',
-        actionType: 'none',
-        actionPayload: '',
-        scanMode,
+    let parsed;
+    try {
+      const firstBrace = rawText.indexOf('{');
+      const lastBrace = rawText.lastIndexOf('}');
+      if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+        throw new Error('Missing JSON braces');
+      }
+      parsed = JSON.parse(rawText.slice(firstBrace, lastBrace + 1));
+    } catch (e) {
+      console.warn('[SnapAct] Text parse failed. Retrying once with strict instructions...');
+      
+      const retryRequestBody = {
+        ...requestBody,
+        contents: [
+          {
+            parts: [{ text: prompt + '\n\nRespond with ONLY the JSON object, nothing else' }],
+          },
+        ],
       };
+
+      const retryRes = await fetch(GEMINI_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: JSON.stringify(retryRequestBody),
+      });
+
+      if (retryRes.ok) {
+        const retryJson = await retryRes.json();
+        const retryRawText = retryJson?.candidates?.[0]?.content?.parts?.[0]?.text;
+        console.log('[SnapAct] RAW text response (retry):', retryRawText);
+        
+        try {
+          const firstBrace = retryRawText.indexOf('{');
+          const lastBrace = retryRawText.lastIndexOf('}');
+          parsed = JSON.parse(retryRawText.slice(firstBrace, lastBrace + 1));
+        } catch (_) {
+          parsed = attemptPartialRecovery(rawText, scanMode);
+        }
+      } else {
+        parsed = attemptPartialRecovery(rawText, scanMode);
+      }
     }
 
-    const parsed = JSON.parse(jsonStr);
+    if (!validateRequiredFields(parsed)) {
+      return { isError: true };
+    }
+
     return parsed;
   } catch (error) {
-    if (error.message?.toLowerCase().includes('network') || error.message?.toLowerCase().includes('fetch')) {
-      console.warn('geminiService.analyzeTextWithContext offline/network warning:', error.message);
-    } else {
-      console.warn('geminiService.analyzeTextWithContext error:', error);
-    }
-    return buildFallbackResult(scanMode, error.message);
+    console.error('geminiService.analyzeTextWithContext error:', error);
+    return { isError: true };
   }
 };
 
 /**
  * Smart merge logic for both text OCR and object visual results.
- *
- * @param {string} extractedText - OCR text
- * @param {object} objectData    - Visual object details from understandObjectFromImage
- * @param {object} userProfile   - Health profile details
- * @param {string} scanMode      - Scan mode
- * @returns {object} Merged or pure result
  */
 export async function analyzeWithContext(extractedText, objectData, userProfile, scanMode = 'Auto') {
-  // If meaningful text was extracted — use text-based analysis (medicines, bills, documents, menus)
-  // If text is empty or less than 10 chars — rely on object visual analysis
-  // If both exist — combine them for richer insight
-
   const hasText = extractedText && extractedText.trim().length > 10;
   const hasObject = objectData && objectData.objectDetected;
 
+  if (hasText && isMedicalReportText(extractedText)) {
+    return await analyzeMedicalReport(extractedText, userProfile);
+  }
+
   if (hasText && hasObject) {
-    // Merge: trust object detection for condition, trust text for specific details
     return {
       detected: objectData.objectDetected,
       condition: objectData.condition,
       conditionDetail: objectData.conditionDetail,
       status: objectData.status,
       insight: objectData.insight,
-      recommendation: objectData.recommendation,
+      recommendation: objectData.recommendation || objectData.action,
       howTo: objectData.howTo,
       temporarySolution: objectData.temporarySolution,
+      buddyNote: objectData.buddyNote || '',
       urgency: objectData.urgency,
       action: objectData.action,
       actionType: objectData.actionType,
       actionPayload: objectData.actionPayload,
       extractedText: extractedText,
       source: 'combined',
-      scanMode
+      scanMode,
+      objectType: objectData.objectType || 'normal',
     };
   }
 
   if (hasText && !hasObject) {
-    // Text only — use existing Gemini text analysis for medicines, bills, menus, documents
     return await analyzeTextWithContext(extractedText, userProfile, scanMode);
   }
 
   if (!hasText && hasObject) {
-    // Object only — return visual analysis directly
     return {
       ...objectData,
       detected: objectData.objectDetected || 'Object detected',
+      recommendation: objectData.recommendation || objectData.action,
       source: 'visual',
-      scanMode
+      scanMode,
+      objectType: objectData.objectType || 'normal',
     };
   }
 
-  // Nothing detected
   return {
     detected: 'Nothing clear detected',
     status: 'warning',
@@ -441,20 +586,8 @@ export async function analyzeWithContext(extractedText, objectData, userProfile,
     action: 'Scan again',
     actionType: 'none',
     actionPayload: '',
-    scanMode
+    scanMode,
+    buddyNote: '',
+    objectType: 'normal',
   };
 }
-
-/**
- * Returns a safe fallback result object when Gemini is unavailable or fails.
- */
-const buildFallbackResult = (scanMode, reason) => ({
-  detected: 'Could not analyze content',
-  status: 'warning',
-  insight: `SnapAct couldn't analyze this content right now. ${reason} Please ensure your Gemini API key is set in config.js and try again.`,
-  action: 'Try Again',
-  actionType: 'none',
-  actionPayload: '',
-  scanMode,
-  error: true,
-});

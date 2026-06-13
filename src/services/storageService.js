@@ -116,3 +116,52 @@ export const getLastScan = async () => {
     return null;
   }
 };
+
+/**
+ * Saves a scan result with an ID, detected name, objectType, timestamp, and dateKey.
+ */
+export const saveScanWithTimestamp = async (scanResult) => {
+  try {
+    const existing = await AsyncStorage.getItem(STORAGE_KEYS.SCAN_HISTORY);
+    const history = existing ? JSON.parse(existing) : [];
+    
+    const timestamp = new Date().toISOString();
+    const dateKey = timestamp.split('T')[0];
+    const newEntry = {
+      ...scanResult,
+      id: scanResult.id || Date.now().toString(),
+      detected: scanResult.detected || 'Unknown Item',
+      objectType: scanResult.objectType || (scanResult.scanMode === 'Food/Menu' ? 'food' : 'other'),
+      timestamp,
+      dateKey,
+    };
+    
+    const updated = [newEntry, ...history].slice(0, MAX_HISTORY);
+    await AsyncStorage.setItem(STORAGE_KEYS.SCAN_HISTORY, JSON.stringify(updated));
+    return newEntry;
+  } catch (error) {
+    console.error('storageService.saveScanWithTimestamp error:', error);
+    return null;
+  }
+};
+
+/**
+ * Retrieves recent scans matching the objectType within the hoursWindow.
+ */
+export const getRecentScansByType = async (objectType, hoursWindow) => {
+  try {
+    const existing = await AsyncStorage.getItem(STORAGE_KEYS.SCAN_HISTORY);
+    const history = existing ? JSON.parse(existing) : [];
+    
+    const now = Date.now();
+    const windowMs = hoursWindow * 60 * 60 * 1000;
+    
+    return history.filter((item) => {
+      const itemTime = new Date(item.timestamp).getTime();
+      return item.objectType === objectType && (now - itemTime) <= windowMs;
+    });
+  } catch (error) {
+    console.error('storageService.getRecentScansByType error:', error);
+    return [];
+  }
+};

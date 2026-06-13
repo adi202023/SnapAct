@@ -21,7 +21,7 @@ import ModePanel, { SCAN_MODES } from '../components/ModePanel';
 import ProfilePanel from '../components/ProfilePanel';
 import { analyzeImageWithContext } from '../services/geminiService';
 import { analyzeLocally } from '../services/localAIService';
-import { getProfile, saveScan, getLastScan } from '../services/storageService';
+import { getProfile, saveScan, getLastScan, saveScanWithTimestamp, getRecentScansByType } from '../services/storageService';
 import { COLORS } from '../constants/colors';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -140,13 +140,24 @@ const CameraScreen = ({ navigation, route }) => {
       const modeLabel = currentModeObj.mode; // e.g. 'Medicine', 'Auto'
       let result;
 
+      // ── FEATURE 1: Snap Buddy Context Query ──
+      let buddyContext = '';
+      if (modeLabel === 'Food/Menu' || modeLabel === 'Auto') {
+        const recentFoodScans = await getRecentScansByType('food', 5);
+        if (recentFoodScans && recentFoodScans.length > 0) {
+          const previousItem = recentFoodScans[0].detected;
+          const hoursAgo = Math.round((Date.now() - new Date(recentFoodScans[0].timestamp).getTime()) / (1000 * 60 * 60) * 10) / 10;
+          buddyContext = `BUDDY CONTEXT: User had "${previousItem}" ${hoursAgo}h ago. If this is unhealthy to repeat (sugar, caffeine, fried food, or conflicts with their health profile), add ONE short friendly line as "buddyNote". Otherwise leave buddyNote empty.`;
+        }
+      }
+
       if (userProfile?.onDeviceMode) {
         setLoadingText('Local AI Engine processing...');
         result = await analyzeLocally(userProfile, modeLabel);
       } else {
-        result = await analyzeImageWithContext(photo.base64, userProfile, modeLabel);
+        result = await analyzeImageWithContext(photo.base64, userProfile, modeLabel, buddyContext);
 
-        if (result?.error) {
+        if (result?.error || result?.isError) {
           console.warn('[SnapAct] Cloud analysis failed. Falling back to local AI engine...');
           setLoadingText('On-device fallback active...');
           result = await analyzeLocally(userProfile, modeLabel);
@@ -154,8 +165,12 @@ const CameraScreen = ({ navigation, route }) => {
         }
       }
 
-      const savedEntry = { ...result, rawText: result.detected };
-      await saveScan(savedEntry);
+      const savedEntry = {
+        ...result,
+        rawText: result.detected,
+        objectType: modeLabel === 'Food/Menu' ? 'food' : (result.objectType || 'other')
+      };
+      await saveScanWithTimestamp(savedEntry);
       setLastScan(savedEntry);
 
       setIsCapturing(false);

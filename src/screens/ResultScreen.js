@@ -17,8 +17,40 @@ import { COLORS } from '../constants/colors';
 import { getProfile } from '../services/storageService';
 
 /**
- * ResultScreen — simplified to only show key action items in precise order,
- * formatted in Raw Terminal / Precision Instrument style.
+ * ExpandableText Component — limits visible content to 3 lines
+ * and renders an inline toggle if the text is long.
+ */
+const ExpandableText = ({ text, style }) => {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return null;
+  const isLong = text.length > 130;
+
+  return (
+    <View>
+      <Text
+        style={style}
+        numberOfLines={expanded ? undefined : 3}
+        ellipsizeMode="tail"
+      >
+        {text}
+      </Text>
+      {isLong && (
+        <TouchableOpacity
+          onPress={() => setExpanded(!expanded)}
+          style={{ marginTop: 6, alignSelf: 'flex-start' }}
+        >
+          <Text style={styles.expandToggle}>
+            {expanded ? '[ SHOW_LESS ]' : '[ SEE_MORE ]'}
+          </Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
+
+/**
+ * ResultScreen — redesigned with strict UI discipline. Max 5 cards.
+ * Integrates Snap Buddy context and specialized medical report formats.
  */
 const ResultScreen = ({ navigation, route }) => {
   const { result, mode } = route?.params || {};
@@ -36,7 +68,7 @@ const ResultScreen = ({ navigation, route }) => {
     }
     loadProfile();
 
-    // Staggered screen entry animations
+    // Entry animations
     Animated.sequence([
       Animated.timing(pillSlideAnim, {
         toValue: 0,
@@ -50,7 +82,6 @@ const ResultScreen = ({ navigation, route }) => {
       ]),
     ]).start();
 
-    // Haptics response matching safety status
     if (result?.status === 'danger') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } else if (result?.status === 'warning') {
@@ -60,7 +91,7 @@ const ResultScreen = ({ navigation, route }) => {
     }
   }, []);
 
-  // Hidden dev console log as requested
+  // Hidden dev console log for telemetry
   useEffect(() => {
     console.log('[SnapAct Dev Debug Log]', {
       detected: result?.detected,
@@ -70,13 +101,32 @@ const ResultScreen = ({ navigation, route }) => {
       urgency: result?.urgency,
       source: result?.source,
       localMetrics: result?.localMetrics,
+      buddyNote: result?.buddyNote,
+      objectType: result?.objectType,
     });
   }, [result]);
 
-  if (!result) {
+  const hasError = !result || result.isError || !result.detected || !result.status || !result.insight;
+
+  // ── ERROR SCREEN ───────────────────────────────────────────────────────────
+  if (hasError) {
     return (
       <SafeAreaView style={styles.safe}>
-        <Text style={styles.errorText}>NO RESULT IN BUFFER.</Text>
+        <StatusBar barStyle="light-content" backgroundColor="#000000" />
+        <View style={styles.errorContainer}>
+          <Text style={styles.errorIcon}>⚠️</Text>
+          <Text style={styles.errorTitle}>ANALYSIS_ERROR // READ_FAILED</Text>
+          <Text style={styles.errorText}>Couldn't read this clearly — try again with better lighting</Text>
+          <TouchableOpacity
+            style={styles.retryBtn}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              navigation.navigate('Camera', { mode: mode || 'Auto' });
+            }}
+          >
+            <Text style={styles.retryBtnText}>RETRY SCAN</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
@@ -90,9 +140,9 @@ const ResultScreen = ({ navigation, route }) => {
   };
 
   const getStatusBgColor = () => {
-    if (status === 'danger') return '#ff0000'; // red
-    if (status === 'warning' || status === 'needs_attention') return '#F5C518'; // amber
-    return '#44DD88'; // green
+    if (status === 'danger') return '#ff0000';
+    if (status === 'warning' || status === 'needs_attention') return '#F5C518';
+    return '#44DD88';
   };
 
   const getStatusTextColor = () => {
@@ -100,10 +150,10 @@ const ResultScreen = ({ navigation, route }) => {
     return '#000000';
   };
 
-  // Logic to determine medical/health vs general scan
   const isMedical =
     mode === 'Medicine' ||
     result?.scanMode === 'Medicine' ||
+    result?.objectType === 'medical_report' ||
     detected.toLowerCase().includes('medicine') ||
     detected.toLowerCase().includes('pill') ||
     detected.toLowerCase().includes('tablet') ||
@@ -114,7 +164,6 @@ const ResultScreen = ({ navigation, route }) => {
 
   const consultButtonLabel = isMedical ? 'Consult Doctor' : 'Consult Expert';
 
-  // Opens WhatsApp with a pre-filled contextual message based on the active scan
   const handleConsult = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     const phone = profile?.emergencyContact?.phone || '';
@@ -152,11 +201,52 @@ const ResultScreen = ({ navigation, route }) => {
     }
   };
 
-  // Only show if status is UNSAFE/CAUTION or object needs cleaning/repair
   const showTempSolution =
     (status === 'danger' || status === 'warning' || status === 'needs_attention' ||
      ['needs_cleaning', 'needs_repair', 'needs_replacement', 'expired', 'unsafe'].includes(result?.condition)) &&
     !!temporarySolution;
+
+  // ── CUSTOM RENDER FOR MEDICAL REPORT ROWS ──────────────────────────────────
+  const renderRecommendationText = () => {
+    const recommendationText = result.recommendation || action || 'No specific action required.';
+    
+    if (result.objectType === 'medical_report') {
+      const lines = recommendationText.split('\n').filter(l => l.trim().length > 0);
+      return (
+        <View style={styles.medicalReportRows}>
+          {lines.map((line, idx) => (
+            <View key={idx} style={styles.medicalReportRow}>
+              <Text style={styles.medicalBullet}>•</Text>
+              <Text style={styles.medicalText}>{line.trim()}</Text>
+            </View>
+          ))}
+        </View>
+      );
+    }
+    
+    return <ExpandableText text={recommendationText} style={styles.sectionBody} />;
+  };
+
+  // ── MERGED BUDDY / TEMP SOLUTION CARD RENDER ──────────────────────────────
+  const renderBuddyOrTempSolutionCard = () => {
+    const hasBuddyNote = !!result.buddyNote;
+    if (!hasBuddyNote && !showTempSolution) return null;
+
+    return (
+      <View style={styles.tempSolCard}>
+        <Text style={styles.tempSolTitle}>// DO THIS NOW</Text>
+        {hasBuddyNote && (
+          <Text style={styles.buddyNoteText}>
+            👋 {result.buddyNote}
+          </Text>
+        )}
+        {hasBuddyNote && showTempSolution && <View style={{ height: 10 }} />}
+        {showTempSolution && (
+          <ExpandableText text={temporarySolution} style={styles.tempSolBody} />
+        )}
+      </View>
+    );
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -180,11 +270,10 @@ const ResultScreen = ({ navigation, route }) => {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* 1. PRODUCT/ITEM NAME */}
+        {/* Card 1: PRODUCT/ITEM NAME & STATUS BANNER */}
         <Animated.View style={{ opacity: card1Opacity }}>
           <Text style={styles.detectedHeading}>{detected.toUpperCase()}</Text>
           
-          {/* 2. STATUS BANNER */}
           <View style={[styles.statusBannerFull, { backgroundColor: getStatusBgColor() }]}>
             <Text style={[styles.statusTextFull, { color: getStatusTextColor() }]}>
               {getStatusText()}
@@ -192,41 +281,34 @@ const ResultScreen = ({ navigation, route }) => {
           </View>
         </Animated.View>
 
-        {/* 3. AI INSIGHT & 4. RECOMMENDATION */}
+        {/* Card 2: AI INSIGHT & Card 3: RECOMMENDATION */}
         <Animated.View style={{ opacity: card2Opacity }}>
-          {/* AI Insight */}
+          {/* Card 2: AI Insight */}
           <View style={styles.sectionCard}>
             <Text style={styles.sectionLabel}>// INSIGHT</Text>
-            <Text style={styles.sectionBody}>{insight}</Text>
+            <ExpandableText text={insight} style={styles.sectionBody} />
           </View>
 
-          {/* Recommendation */}
+          {/* Card 3: Recommendation */}
           <View style={styles.sectionCard}>
             <Text style={styles.sectionLabel}>// RECOMMENDED ACTION</Text>
-            <Text style={styles.sectionBody}>
-              {result.recommendation || action || 'No specific action required.'}
-            </Text>
+            {renderRecommendationText()}
           </View>
         </Animated.View>
 
-        {/* 5. CONSULT BUTTON & 6. TEMPORARY SOLUTION */}
+        {/* Card 4: BUDDY NOTE / TEMP SOLUTION & Card 5: ACTION BUTTON */}
         <Animated.View style={{ opacity: card3Opacity }}>
-          {/* Consult Section */}
+          {/* Card 4: Buddy note / Temp solution (Merged) */}
+          {renderBuddyOrTempSolutionCard()}
+
+          {/* Card 5: Action Button (Consultation) */}
           <View style={styles.sectionCard}>
             <Text style={styles.sectionLabel}>// NEED HELP?</Text>
             <TouchableOpacity style={styles.consultBtn} onPress={handleConsult}>
               <Text style={styles.consultBtnText}>{consultButtonLabel}</Text>
-              <Text style={styles.consultBtnArrow}>→</Text>
+              <Text style={styles.consultBtnText}>{`→`}</Text>
             </TouchableOpacity>
           </View>
-
-          {/* Temporary Solution */}
-          {showTempSolution && (
-            <View style={styles.tempSolCard}>
-              <Text style={styles.tempSolTitle}>// DO THIS NOW</Text>
-              <Text style={styles.tempSolBody}>{temporarySolution}</Text>
-            </View>
-          )}
 
           {/* Bottom navigation utilities (aligned with terminal styling) */}
           <View style={styles.bottomNavSection}>
@@ -336,6 +418,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  expandToggle: {
+    fontFamily: 'Courier New',
+    fontSize: 10,
+    color: '#F5C518',
+    fontWeight: 'bold',
+  },
   consultBtn: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -351,12 +439,6 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#000000',
     textTransform: 'uppercase',
-  },
-  consultBtnArrow: {
-    fontFamily: 'Courier New',
-    fontSize: 16,
-    fontWeight: '900',
-    color: '#000000',
   },
   tempSolCard: {
     backgroundColor: '#0a0a0a',
@@ -380,6 +462,12 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     lineHeight: 19,
+  },
+  buddyNoteText: {
+    fontFamily: 'Courier New',
+    color: '#E8F318',
+    fontSize: 13,
+    lineHeight: 18,
   },
   bottomNavSection: {
     gap: 8,
@@ -408,12 +496,66 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#888888',
   },
-  errorText: {
-    color: '#888888',
+  errorContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    backgroundColor: '#000000',
+  },
+  errorIcon: {
+    fontSize: 48,
+    marginBottom: 16,
+  },
+  errorTitle: {
     fontFamily: 'Courier New',
-    textAlign: 'center',
-    marginTop: 40,
     fontSize: 14,
+    fontWeight: '900',
+    color: '#ff0000',
+    marginBottom: 10,
+    letterSpacing: 1,
+  },
+  errorText: {
+    fontFamily: 'Courier New',
+    color: '#888888',
+    textAlign: 'center',
+    fontSize: 12,
+    lineHeight: 18,
+    marginBottom: 32,
+  },
+  retryBtn: {
+    backgroundColor: '#F5C518',
+    paddingVertical: 16,
+    paddingHorizontal: 40,
+    width: '100%',
+    alignItems: 'center',
+  },
+  retryBtnText: {
+    fontFamily: 'Courier New',
+    fontSize: 14,
+    fontWeight: '900',
+    color: '#000000',
+  },
+  medicalReportRows: {
+    gap: 6,
+    marginTop: 4,
+  },
+  medicalReportRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  medicalBullet: {
+    color: '#F5C518',
+    fontSize: 14,
+    lineHeight: 18,
+  },
+  medicalText: {
+    fontFamily: 'Courier New',
+    color: '#CCCCCC',
+    fontSize: 13,
+    lineHeight: 18,
+    flex: 1,
   },
 });
 
