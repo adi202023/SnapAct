@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -13,40 +13,44 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import OnDevicePanel from '../components/OnDevicePanel';
 import { COLORS } from '../constants/colors';
+import { getProfile } from '../services/storageService';
 
 /**
- * ResultScreen — redesigned in Raw Terminal / Precision Instrument style.
+ * ResultScreen — simplified to only show key action items in precise order,
+ * formatted in Raw Terminal / Precision Instrument style.
  */
 const ResultScreen = ({ navigation, route }) => {
-  const { result, mode, fromHome } = route?.params || {};
+  const { result, mode } = route?.params || {};
+  const [profile, setProfile] = useState(null);
 
   const pillSlideAnim = useRef(new Animated.Value(-100)).current;
   const card1Opacity = useRef(new Animated.Value(0)).current;
   const card2Opacity = useRef(new Animated.Value(0)).current;
   const card3Opacity = useRef(new Animated.Value(0)).current;
-  const card4Opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Precise staggered animations on mount
+    async function loadProfile() {
+      const p = await getProfile();
+      setProfile(p);
+    }
+    loadProfile();
+
+    // Staggered screen entry animations
     Animated.sequence([
-      // 1. Status banner slides down from top
       Animated.timing(pillSlideAnim, {
         toValue: 0,
         duration: 350,
         useNativeDriver: true,
       }),
-      // 2. Remaining segments fade in with 100ms stagger
       Animated.stagger(100, [
         Animated.timing(card1Opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         Animated.timing(card2Opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
         Animated.timing(card3Opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
-        Animated.timing(card4Opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
       ]),
     ]).start();
 
-    // Haptic response
+    // Haptics response matching safety status
     if (result?.status === 'danger') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } else if (result?.status === 'warning') {
@@ -56,6 +60,19 @@ const ResultScreen = ({ navigation, route }) => {
     }
   }, []);
 
+  // Hidden dev console log as requested
+  useEffect(() => {
+    console.log('[SnapAct Dev Debug Log]', {
+      detected: result?.detected,
+      status: result?.status,
+      condition: result?.condition,
+      conditionDetail: result?.conditionDetail,
+      urgency: result?.urgency,
+      source: result?.source,
+      localMetrics: result?.localMetrics,
+    });
+  }, [result]);
+
   if (!result) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -64,158 +81,88 @@ const ResultScreen = ({ navigation, route }) => {
     );
   }
 
-  const { detected, status, insight, action, actionType, actionPayload } = result;
+  const { detected, status, insight, action, actionType, actionPayload, temporarySolution } = result;
 
-  /** Solid background configs according to specifications */
-  const getStatusConfig = () => {
-    switch (status) {
-      case 'danger':
-        return {
-          bg: '#ff0000',
-          border: '#ff0000',
-          text: 'CRITICAL STATUS: DANGER',
-          color: '#ffffff',
-          riskColor: '#ff4444',
-          riskVal: 85,
-        };
-      case 'warning':
-        return {
-          bg: '#F5C518',
-          border: '#F5C518',
-          text: 'CRITICAL STATUS: WARNING',
-          color: '#000000',
-          riskColor: '#F5C518',
-          riskVal: 50,
-        };
-      case 'needs_attention':
-        return {
-          bg: '#E8F318',
-          border: '#E8F318',
-          text: 'CRITICAL STATUS: ATTENTION',
-          color: '#000000',
-          riskColor: '#E8F318',
-          riskVal: 40,
-        };
-      default: // safe
-        return {
-          bg: '#44DD88',
-          border: '#44DD88',
-          text: 'CRITICAL STATUS: SAFE / SECURE',
-          color: '#000000',
-          riskColor: '#44DD88',
-          riskVal: 10,
-        };
-    }
+  const getStatusText = () => {
+    if (status === 'danger') return 'UNSAFE';
+    if (status === 'warning' || status === 'needs_attention') return 'CAUTION';
+    return 'SAFE';
   };
 
-  const statusConfig = getStatusConfig();
-
-  const getModeIcon = () => {
-    if (result.source === 'visual' || result.condition) {
-      return '📷';
-    }
-    switch (mode) {
-      case 'Medicine':  return '💊';
-      case 'Food/Menu': return '🍽️';
-      case 'Bill':      return '💡';
-      case 'Document':  return '📄';
-      default:          return '🔍';
-    }
+  const getStatusBgColor = () => {
+    if (status === 'danger') return '#ff0000'; // red
+    if (status === 'warning' || status === 'needs_attention') return '#F5C518'; // amber
+    return '#44DD88'; // green
   };
 
-  const handleAction = async () => {
+  const getStatusTextColor = () => {
+    if (status === 'danger') return '#ffffff';
+    return '#000000';
+  };
+
+  // Logic to determine medical/health vs general scan
+  const isMedical =
+    mode === 'Medicine' ||
+    result?.scanMode === 'Medicine' ||
+    detected.toLowerCase().includes('medicine') ||
+    detected.toLowerCase().includes('pill') ||
+    detected.toLowerCase().includes('tablet') ||
+    detected.toLowerCase().includes('capsule') ||
+    detected.toLowerCase().includes('dose') ||
+    detected.toLowerCase().includes('dolo') ||
+    detected.toLowerCase().includes('syrup');
+
+  const consultButtonLabel = isMedical ? 'Consult Doctor' : 'Consult Expert';
+
+  // Opens WhatsApp with a pre-filled contextual message based on the active scan
+  const handleConsult = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-    if (actionType === 'whatsapp' && actionPayload) {
-      const encoded = encodeURIComponent(actionPayload);
-      const url = `whatsapp://send?text=${encoded}`;
-      const canOpen = await Linking.canOpenURL(url);
-      if (canOpen) {
-        await Linking.openURL(url);
-      } else {
-        Alert.alert('LINK_FAILED', 'WhatsApp messenger is not configured.');
-      }
-    } else if (actionType === 'url' && actionPayload) {
-      const canOpen = await Linking.canOpenURL(actionPayload);
-      if (canOpen) {
-        await Linking.openURL(actionPayload);
-      } else {
-        Alert.alert('LINK_FAILED', `Cannot open payload: ${actionPayload}`);
-      }
-    }
-  };
+    const phone = profile?.emergencyContact?.phone || '';
+    const name = profile?.emergencyContact?.name || '';
 
-  const renderConditionBadge = () => {
-    if (!result?.condition) return null;
-    let badgeText = result.condition.replace('_', ' ').toUpperCase();
-    return (
-      <View style={styles.badge}>
-        <Text style={styles.badgeText}>COND: {badgeText}</Text>
-      </View>
-    );
-  };
-
-  const renderUrgencyPill = () => {
-    if (!result?.urgency) return null;
-    return (
-      <View style={[styles.badge, { marginLeft: 6 }]}>
-        <Text style={styles.badgeText}>URG: {result.urgency.toUpperCase()}</Text>
-      </View>
-    );
-  };
-
-  const renderTemporarySolutionSection = () => {
-    if (!result?.temporarySolution) return null;
-    return (
-      <View style={styles.tempSolCard}>
-        <Text style={styles.tempSolTitle}>// DO THIS RIGHT NOW</Text>
-        <Text style={styles.tempSolBody}>{result.temporarySolution}</Text>
-      </View>
-    );
-  };
-
-  const renderHowToSection = () => {
-    if (!result?.howTo && !result?.conditionDetail) return null;
-    return (
-      <View style={styles.howToCard}>
-        <Text style={styles.howToTitle}>// STEPS_TO_RESOLVE</Text>
-        {result.conditionDetail ? (
-          <Text style={styles.conditionDetailText}>
-            OBS: {result.conditionDetail}
-          </Text>
-        ) : null}
-        {result.howTo ? (
-          <Text style={styles.howToBody}>{result.howTo}</Text>
-        ) : null}
-      </View>
-    );
-  };
-
-  // Highlights first word in gold, rest in white
-  const renderDetectedName = () => {
-    const parts = detected.split(' ');
-    if (parts.length > 1) {
-      return (
-        <Text style={styles.detectedText}>
-          <Text style={{ color: '#F5C518' }}>{parts[0].toUpperCase()}</Text>{' '}
-          {parts.slice(1).join(' ').toUpperCase()}
-        </Text>
+    if (!phone) {
+      Alert.alert(
+        'NO_CONTACT',
+        'No emergency contact phone number configured. Please set it up in your Profile settings.',
+        [
+          {
+            text: 'Configure Profile',
+            onPress: () => navigation.navigate('ProfileSetup', { editMode: true }),
+          },
+          { text: 'Cancel', style: 'cancel' },
+        ]
       );
+      return;
     }
-    return <Text style={styles.detectedText}>{detected.toUpperCase()}</Text>;
+
+    const message = `Hello ${name || 'Emergency Contact'},\n\nI am sharing a SnapAct alert regarding the scan of "${detected}".\n\nInsight: ${insight}\n\nRecommendation: ${result.recommendation || action || 'None'}`;
+    const url = `whatsapp://send?phone=${phone.replace(/[^0-9+]/g, '')}&text=${encodeURIComponent(message)}`;
+
+    const canOpen = await Linking.canOpenURL(url);
+    if (canOpen) {
+      await Linking.openURL(url);
+    } else {
+      const webUrl = `https://wa.me/${phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(message)}`;
+      const canOpenWeb = await Linking.canOpenURL(webUrl);
+      if (canOpenWeb) {
+        await Linking.openURL(webUrl);
+      } else {
+        Alert.alert('LINK_FAILED', 'Could not launch WhatsApp messenger.');
+      }
+    }
   };
+
+  // Only show if status is UNSAFE/CAUTION or object needs cleaning/repair
+  const showTempSolution =
+    (status === 'danger' || status === 'warning' || status === 'needs_attention' ||
+     ['needs_cleaning', 'needs_repair', 'needs_replacement', 'expired', 'unsafe'].includes(result?.condition)) &&
+    !!temporarySolution;
 
   return (
     <SafeAreaView style={styles.safe}>
       <StatusBar barStyle="light-content" backgroundColor="#000000" />
 
-      {/* Top sliding solid banner */}
-      <Animated.View style={[styles.statusBanner, { backgroundColor: statusConfig.bg, transform: [{ translateY: pillSlideAnim }] }]}>
-        <Text style={[styles.statusText, { color: statusConfig.color }]}>
-          {statusConfig.text}
-        </Text>
-      </Animated.View>
-
-      {/* Navigation Row */}
+      {/* Navigation Row — back button only, no system title */}
       <View style={styles.topNav}>
         <TouchableOpacity
           onPress={() => {
@@ -226,7 +173,6 @@ const ResultScreen = ({ navigation, route }) => {
         >
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.navTitle}>SYSTEM_BUFFER_RESULT</Text>
         <View style={{ width: 40 }} />
       </View>
 
@@ -234,94 +180,76 @@ const ResultScreen = ({ navigation, route }) => {
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        {/* Segment 1: Header / Detected Info */}
+        {/* 1. PRODUCT/ITEM NAME */}
         <Animated.View style={{ opacity: card1Opacity }}>
-          <View style={styles.detectedCard}>
-            <Text style={styles.detectedIcon}>{getModeIcon()}</Text>
-            <View style={styles.detectedRight}>
-              <Text style={styles.detectedLabel}>// SCAN_TARGET_IDENTIFIED</Text>
-              {renderDetectedName()}
-              <View style={styles.badgeRow}>
-                {renderConditionBadge()}
-                {renderUrgencyPill()}
-              </View>
-            </View>
+          <Text style={styles.detectedHeading}>{detected.toUpperCase()}</Text>
+          
+          {/* 2. STATUS BANNER */}
+          <View style={[styles.statusBannerFull, { backgroundColor: getStatusBgColor() }]}>
+            <Text style={[styles.statusTextFull, { color: getStatusTextColor() }]}>
+              {getStatusText()}
+            </Text>
           </View>
         </Animated.View>
 
-        {/* Segment 2: AI Insight & Risk Telemetry */}
+        {/* 3. AI INSIGHT & 4. RECOMMENDATION */}
         <Animated.View style={{ opacity: card2Opacity }}>
-          <View style={styles.insightCard}>
-            <View style={styles.insightHeader}>
-              <Text style={styles.insightTitle}>// AI INSIGHT</Text>
-              <View style={[styles.aiChip, result.source === 'local' && styles.aiChipLocal]}>
-                <Text style={[styles.aiChipText, result.source === 'local' && styles.aiChipTextLocal]}>
-                  {result.source === 'local' ? '🤖 LOCAL_AI' : 'CLOUD_LINK'}
-                </Text>
-              </View>
-            </View>
-            <Text style={styles.insightText}>{insight}</Text>
+          {/* AI Insight */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionLabel}>// INSIGHT</Text>
+            <Text style={styles.sectionBody}>{insight}</Text>
           </View>
 
-          {/* Risk Level Bar */}
-          <View style={styles.riskContainer}>
-            <View style={styles.riskHeader}>
-              <Text style={styles.riskLabel}>// RISK_LEVEL</Text>
-              <Text style={[styles.riskValue, { color: statusConfig.riskColor }]}>
-                {statusConfig.riskVal}%
-              </Text>
-            </View>
-            <View style={styles.riskTrack}>
-              <View style={[styles.riskFill, { width: `${statusConfig.riskVal}%`, backgroundColor: statusConfig.riskColor }]} />
-            </View>
+          {/* Recommendation */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionLabel}>// RECOMMENDED ACTION</Text>
+            <Text style={styles.sectionBody}>
+              {result.recommendation || action || 'No specific action required.'}
+            </Text>
           </View>
         </Animated.View>
 
-        {/* Segment 3: Performance Telemetry (if local) */}
-        {result.source === 'local' && result.localMetrics && (
-          <Animated.View style={{ opacity: card3Opacity }}>
-            <OnDevicePanel metrics={result.localMetrics} />
-          </Animated.View>
-        )}
+        {/* 5. CONSULT BUTTON & 6. TEMPORARY SOLUTION */}
+        <Animated.View style={{ opacity: card3Opacity }}>
+          {/* Consult Section */}
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionLabel}>// NEED HELP?</Text>
+            <TouchableOpacity style={styles.consultBtn} onPress={handleConsult}>
+              <Text style={styles.consultBtnText}>{consultButtonLabel}</Text>
+              <Text style={styles.consultBtnArrow}>→</Text>
+            </TouchableOpacity>
+          </View>
 
-        {/* Segment 4: Resolution & Actions */}
-        <Animated.View style={{ opacity: card4Opacity, marginTop: 12 }}>
-          {renderTemporarySolutionSection()}
-          {renderHowToSection()}
+          {/* Temporary Solution */}
+          {showTempSolution && (
+            <View style={styles.tempSolCard}>
+              <Text style={styles.tempSolTitle}>// DO THIS NOW</Text>
+              <Text style={styles.tempSolBody}>{temporarySolution}</Text>
+            </View>
+          )}
 
-          <View style={styles.actionsSection}>
-            <Text style={styles.actionsTitle}>// RECOMMENDATION_EXECUTION</Text>
-
-            {actionType !== 'none' && action && (
-              <TouchableOpacity
-                style={styles.customActionBtn}
-                onPress={handleAction}
-              >
-                <Text style={styles.customActionText}>{action}</Text>
-                <Text style={styles.customActionArrow}>→</Text>
-              </TouchableOpacity>
-            )}
-
+          {/* Bottom navigation utilities (aligned with terminal styling) */}
+          <View style={styles.bottomNavSection}>
             <TouchableOpacity
-              style={styles.customActionBtnSecondary}
+              style={styles.navBtnSecondary}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 navigation.navigate('Camera', { mode: mode || 'Auto' });
               }}
             >
-              <Text style={styles.customActionTextSecondary}>SCAN TARGET RECAPTURE</Text>
-              <Text style={styles.customActionArrowSecondary}>↺</Text>
+              <Text style={styles.navBtnTextSecondary}>RECAPTURE TARGET</Text>
+              <Text style={styles.navBtnArrowSecondary}>↺</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.customActionBtnSecondary}
+              style={styles.navBtnSecondary}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 navigation.navigate('Camera', { isHome: true });
               }}
             >
-              <Text style={styles.customActionTextSecondary}>RETURN TO CAMERA HUB</Text>
-              <Text style={styles.customActionArrowSecondary}>⌂</Text>
+              <Text style={styles.navBtnTextSecondary}>EXIT TO CAMERA</Text>
+              <Text style={styles.navBtnArrowSecondary}>⌂</Text>
             </TouchableOpacity>
           </View>
         </Animated.View>
@@ -334,17 +262,6 @@ const styles = StyleSheet.create({
   safe: {
     flex: 1,
     backgroundColor: '#000000',
-  },
-  statusBanner: {
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  statusText: {
-    fontFamily: 'Courier New',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1,
   },
   topNav: {
     flexDirection: 'row',
@@ -370,158 +287,85 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
-  navTitle: {
-    color: '#F5C518',
-    fontFamily: 'Courier New',
-    fontSize: 12,
-    fontWeight: '700',
-  },
   content: {
     paddingHorizontal: 20,
     paddingBottom: 40,
-    paddingTop: 16,
+    paddingTop: 20,
   },
-  detectedCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#0a0a0a',
-    borderRadius: 0,
-    padding: 16,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: '#1a1a1a',
-    borderLeftWidth: 2,
-    borderLeftColor: '#F5C518',
-  },
-  detectedIcon: {
-    fontSize: 32,
-    marginRight: 16,
-  },
-  detectedRight: {
-    flex: 1,
-  },
-  detectedLabel: {
-    fontSize: 9,
-    fontFamily: 'Courier New',
-    color: COLORS.textSecondary,
-    letterSpacing: 1,
-    marginBottom: 4,
-  },
-  detectedText: {
-    fontSize: 22,
+  detectedHeading: {
+    fontSize: 28,
     fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-condensed',
     fontWeight: '900',
-    color: COLORS.textPrimary,
-    lineHeight: 26,
+    color: '#FFFFFF',
     letterSpacing: -0.5,
+    marginBottom: 16,
   },
-  badgeRow: {
-    flexDirection: 'row',
-    marginTop: 8,
+  statusBannerFull: {
+    width: '100%',
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 24,
   },
-  badge: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderWidth: 1,
-    borderColor: '#222222',
-    borderRadius: 0,
-    backgroundColor: 'rgba(0,0,0,0.4)',
-  },
-  badgeText: {
-    fontSize: 8,
+  statusTextFull: {
     fontFamily: 'Courier New',
-    color: '#444444',
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 2,
   },
-  insightCard: {
+  sectionCard: {
     backgroundColor: '#0a0a0a',
-    borderRadius: 0,
-    padding: 16,
-    marginBottom: 14,
     borderWidth: 1,
     borderColor: '#1a1a1a',
     borderLeftWidth: 2,
     borderLeftColor: '#F5C518',
+    padding: 16,
+    marginBottom: 16,
   },
-  insightHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  insightTitle: {
-    fontSize: 11,
+  sectionLabel: {
     fontFamily: 'Courier New',
+    fontSize: 11,
     fontWeight: '900',
     color: '#F5C518',
+    marginBottom: 8,
+    letterSpacing: 1,
   },
-  aiChip: {
-    backgroundColor: 'rgba(245,197,24,0.12)',
-    borderRadius: 0,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderWidth: 1,
-    borderColor: 'rgba(245,197,24,0.25)',
-  },
-  aiChipText: {
-    fontSize: 8,
+  sectionBody: {
     fontFamily: 'Courier New',
-    color: COLORS.primary,
-    fontWeight: '900',
+    color: '#CCCCCC',
+    fontSize: 13,
+    lineHeight: 19,
   },
-  aiChipLocal: {
-    backgroundColor: 'rgba(68,221,136,0.12)',
-    borderColor: 'rgba(68,221,136,0.35)',
-  },
-  aiChipTextLocal: {
-    color: COLORS.success,
-  },
-  insightText: {
-    color: '#888888',
-    fontFamily: 'Courier New',
-    fontSize: 12,
-    lineHeight: 18,
-    marginTop: 8,
-  },
-  riskContainer: {
-    marginBottom: 20,
-    backgroundColor: '#0a0a0a',
-    borderWidth: 1,
-    borderColor: '#1a1a1a',
-    padding: 14,
-  },
-  riskHeader: {
+  consultBtn: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 6,
+    backgroundColor: '#F5C518',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    marginTop: 8,
   },
-  riskLabel: {
+  consultBtnText: {
     fontFamily: 'Courier New',
-    fontSize: 9,
-    fontWeight: '700',
-    color: '#888888',
-  },
-  riskValue: {
-    fontFamily: 'Courier New',
-    fontSize: 10,
+    fontSize: 13,
     fontWeight: '900',
+    color: '#000000',
+    textTransform: 'uppercase',
   },
-  riskTrack: {
-    height: 2,
-    backgroundColor: '#111111',
-  },
-  riskFill: {
-    height: '100%',
+  consultBtnArrow: {
+    fontFamily: 'Courier New',
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#000000',
   },
   tempSolCard: {
     backgroundColor: '#0a0a0a',
-    borderRadius: 0,
-    padding: 16,
-    marginBottom: 16,
     borderWidth: 1,
     borderColor: '#1a1a1a',
     borderLeftWidth: 2,
     borderLeftColor: '#44DD88',
+    padding: 16,
+    marginBottom: 20,
   },
   tempSolTitle: {
     fontFamily: 'Courier New',
@@ -529,105 +373,43 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: '#44DD88',
     marginBottom: 8,
+    letterSpacing: 1,
   },
   tempSolBody: {
     fontFamily: 'Courier New',
-    color: COLORS.textPrimary,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  howToCard: {
-    backgroundColor: '#0a0a0a',
-    borderRadius: 0,
-    padding: 16,
-    marginBottom: 20,
-    borderWidth: 1,
-    borderColor: '#1a1a1a',
-  },
-  howToTitle: {
-    fontSize: 11,
-    fontFamily: 'Courier New',
-    fontWeight: '900',
-    color: '#F5C518',
-    marginBottom: 8,
-  },
-  conditionDetailText: {
-    color: COLORS.textPrimary,
-    fontFamily: 'Courier New',
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 8,
-    fontStyle: 'italic',
-  },
-  howToBody: {
-    color: COLORS.textSecondary,
-    fontFamily: 'Courier New',
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  actionsSection: {
-    gap: 8,
-  },
-  actionsTitle: {
-    fontSize: 10,
-    fontFamily: 'Courier New',
-    fontWeight: '700',
-    color: '#333333',
-    marginBottom: 4,
-    letterSpacing: 0.5,
-  },
-  customActionBtn: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#F5C518',
-    borderRadius: 0,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    width: '100%',
-    marginBottom: 4,
-  },
-  customActionText: {
-    fontFamily: 'Courier New',
+    color: '#FFFFFF',
     fontSize: 13,
-    fontWeight: '900',
-    color: '#000000',
-    textTransform: 'uppercase',
+    lineHeight: 19,
   },
-  customActionArrow: {
-    fontFamily: 'Courier New',
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#000000',
+  bottomNavSection: {
+    gap: 8,
+    marginTop: 12,
   },
-  customActionBtnSecondary: {
+  navBtnSecondary: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: 'transparent',
     borderWidth: 1,
     borderColor: '#1a1a1a',
-    borderRadius: 0,
     paddingVertical: 16,
     paddingHorizontal: 20,
-    width: '100%',
-    marginBottom: 4,
   },
-  customActionTextSecondary: {
+  navBtnTextSecondary: {
     fontFamily: 'Courier New',
     fontSize: 12,
     fontWeight: '700',
-    color: COLORS.textSecondary,
+    color: '#888888',
     textTransform: 'uppercase',
   },
-  customActionArrowSecondary: {
+  navBtnArrowSecondary: {
     fontFamily: 'Courier New',
     fontSize: 13,
     fontWeight: '700',
-    color: COLORS.textSecondary,
+    color: '#888888',
   },
   errorText: {
-    color: COLORS.textSecondary,
+    color: '#888888',
     fontFamily: 'Courier New',
     textAlign: 'center',
     marginTop: 40,

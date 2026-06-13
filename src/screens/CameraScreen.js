@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Animated,
   Dimensions,
   BackHandler,
+  Image,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -28,8 +29,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 /**
  * CameraScreen — the permanent home shell for returning users.
  * Full-screen camera with HUD overlays, slide-in mode panel, slide-in profile panel.
- * On first launch this is reached via normal nav; on subsequent launches it is the
- * initial route, so the back button minimises the app instead of going back.
+ * Freezes the view on the captured photo with an "// ANALYZING..." overlay during analysis.
  */
 const CameraScreen = ({ navigation, route }) => {
   // Determine if this screen is the root (launched directly, no back stack)
@@ -44,6 +44,10 @@ const CameraScreen = ({ navigation, route }) => {
   const [loadingText, setLoadingText] = useState('Capturing...');
   const [onDeviceMode, setOnDeviceMode] = useState(false);
   const [lastScan, setLastScan] = useState(null);
+
+  // Freezes screen with static captured image during processing
+  const [capturedPhotoUri, setCapturedPhotoUri] = useState(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // Panel visibility
   const [modePanelVisible, setModePanelVisible] = useState(false);
@@ -60,6 +64,7 @@ const CameraScreen = ({ navigation, route }) => {
         setOnDeviceMode(!!userProfile?.onDeviceMode);
         const last = await getLastScan();
         setLastScan(last);
+        setCapturedPhotoUri(null); // Reset freeze on screen focus so camera goes live
       })();
     }, [])
   );
@@ -75,6 +80,33 @@ const CameraScreen = ({ navigation, route }) => {
       return () => sub.remove();
     }, [isHomeMode])
   );
+
+  // ── Pulse animation for "// ANALYZING..." text ─────────────────────────────
+  useEffect(() => {
+    let animation;
+    if (isCapturing) {
+      animation = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 0.3,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1.0,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      animation.start();
+    } else {
+      pulseAnim.setValue(1.0);
+    }
+    return () => {
+      if (animation) animation.stop();
+    };
+  }, [isCapturing]);
 
   // ── Capture button bounce animation ────────────────────────────────────────
   const animateCaptureBtn = () => {
@@ -100,6 +132,10 @@ const CameraScreen = ({ navigation, route }) => {
         skipProcessing: true,
       });
 
+      // Immediately freeze the camera view with the captured image overlay
+      setCapturedPhotoUri(photo.uri);
+      setLoadingText('Analysing with AI...');
+
       const userProfile = await getProfile();
       const modeLabel = currentModeObj.mode; // e.g. 'Medicine', 'Auto'
       let result;
@@ -108,7 +144,6 @@ const CameraScreen = ({ navigation, route }) => {
         setLoadingText('Local AI Engine processing...');
         result = await analyzeLocally(userProfile, modeLabel);
       } else {
-        setLoadingText('Analysing with AI...');
         result = await analyzeImageWithContext(photo.base64, userProfile, modeLabel);
 
         if (result?.error) {
@@ -128,6 +163,7 @@ const CameraScreen = ({ navigation, route }) => {
     } catch (error) {
       console.error('CameraScreen.handleCapture error:', error);
       setIsCapturing(false);
+      setCapturedPhotoUri(null); // Clear image freeze on error
       Alert.alert("Couldn't read this", 'Something went wrong. Please try again.', [
         { text: 'Retry', style: 'default' },
       ]);
@@ -302,6 +338,26 @@ const CameraScreen = ({ navigation, route }) => {
           <Text style={styles.profileIconText}>👤</Text>
         </TouchableOpacity>
       </View>
+
+      {/* Captured photo freeze (full screen overlay, hides live camera view during analysis) */}
+      {capturedPhotoUri && (
+        <Image
+          source={{ uri: capturedPhotoUri }}
+          style={StyleSheet.absoluteFillObject}
+          resizeMode="cover"
+        />
+      )}
+
+      {/* Full screen loading/analyzing overlay on top of frozen captured photo */}
+      {capturedPhotoUri && isCapturing && (
+        <View style={styles.analysisOverlay}>
+          <ActivityIndicator color={COLORS.primary} size="large" />
+          <Animated.Text style={[styles.analysisText, { opacity: pulseAnim }]}>
+            // ANALYZING...
+          </Animated.Text>
+          <Text style={styles.analysisSubText}>{loadingText}</Text>
+        </View>
+      )}
 
       {/* ── SLIDE-IN PANELS (rendered on top of everything) ─────────── */}
       <ModePanel
@@ -629,6 +685,30 @@ const styles = StyleSheet.create({
   permBackText: {
     color: COLORS.textSecondary,
     fontSize: 15,
+  },
+
+  // ── Analysis loading screen overlays ──────────────────────────────
+  analysisOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    zIndex: 999,
+  },
+  analysisText: {
+    fontFamily: 'Courier New',
+    fontSize: 18,
+    fontWeight: '900',
+    color: COLORS.primary,
+    letterSpacing: 1,
+  },
+  analysisSubText: {
+    fontFamily: 'Courier New',
+    fontSize: 11,
+    color: '#888888',
+    textAlign: 'center',
+    paddingHorizontal: 40,
   },
 });
 
