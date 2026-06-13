@@ -8,6 +8,7 @@ import {
   Dimensions,
   Animated,
   StatusBar,
+  Platform,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { setOnboarded } from '../services/storageService';
@@ -18,31 +19,30 @@ const { width } = Dimensions.get('window');
 const SLIDES = [
   {
     icon: '📷',
-    title: 'Point at anything',
+    title: 'POINT AT ANYTHING',
     subtitle:
-      'Medicine strips, restaurant menus, electricity bills, legal documents — SnapAct reads them all instantly.',
+      'Medicine packages, restaurant menus, utility invoices, legal contracts — SnapAct scans them all instantly.',
   },
   {
     icon: '🧠',
-    title: 'AI knows YOU',
+    title: 'CONTEXT AWARE',
     subtitle:
-      'Your medicines, allergies, emergency contacts — the AI responds in your personal context, not generic advice.',
+      'Your active prescriptions, food allergies, emergency contacts — the system processes everything in your personal context.',
   },
   {
     icon: '⚡',
-    title: 'Takes action',
+    title: 'AUTOMATE ACTIONS',
     subtitle:
-      'Dangerous drug interaction? Alerts your doctor. Allergen found? Warns your contact. Overcharge? Files the complaint.',
+      'Detects dangerous drug interactions and draft doctor alerts. Identifies food allergens and warn your contacts.',
   },
 ];
 
 /**
- * Onboarding screen with 3 swipeable slides, dot indicators, Next/Skip, and a final CTA.
+ * OnboardingScreen — redesigned in Raw Terminal / Precision Instrument style.
  */
 const OnboardingScreen = ({ navigation }) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const scrollRef = useRef(null);
-  const dotAnim = useRef(SLIDES.map(() => new Animated.Value(0))).current;
 
   const goToSlide = (index) => {
     scrollRef.current?.scrollTo({ x: index * width, animated: true });
@@ -77,12 +77,12 @@ const OnboardingScreen = ({ navigation }) => {
 
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
+      <StatusBar barStyle="light-content" backgroundColor="#000000" />
 
       {/* Skip button */}
       {!isLast && (
         <TouchableOpacity style={styles.skipBtn} onPress={handleSkip}>
-          <Text style={styles.skipText}>Skip</Text>
+          <Text style={styles.skipText}>// SKIP</Text>
         </TouchableOpacity>
       )}
 
@@ -98,8 +98,8 @@ const OnboardingScreen = ({ navigation }) => {
       >
         {SLIDES.map((slide, index) => (
           <View key={index} style={styles.slide}>
-            {/* Icon circle */}
-            <View style={styles.iconCircle}>
+            {/* Square Icon Container */}
+            <View style={styles.iconSquare}>
               <Text style={styles.icon}>{slide.icon}</Text>
             </View>
             <Text style={styles.title}>{slide.title}</Text>
@@ -108,7 +108,7 @@ const OnboardingScreen = ({ navigation }) => {
         ))}
       </ScrollView>
 
-      {/* Dot indicators */}
+      {/* Rectangular progress pips */}
       <View style={styles.dots}>
         {SLIDES.map((_, i) => (
           <View
@@ -121,15 +121,15 @@ const OnboardingScreen = ({ navigation }) => {
         ))}
       </View>
 
-      {/* CTA buttons */}
+      {/* CTA flat buttons */}
       <View style={styles.buttonArea}>
         {isLast ? (
           <TouchableOpacity style={styles.primaryBtn} onPress={handleContinue}>
-            <Text style={styles.primaryBtnText}>Set Up My Profile</Text>
+            <Text style={styles.primaryBtnText}>INITIALIZE HEALTH PROFILE</Text>
           </TouchableOpacity>
         ) : (
           <TouchableOpacity style={styles.primaryBtn} onPress={handleNext}>
-            <Text style={styles.primaryBtnText}>Next →</Text>
+            <Text style={styles.primaryBtnText}>CONTINUE STEP →</Text>
           </TouchableOpacity>
         )}
       </View>
@@ -140,7 +140,7 @@ const OnboardingScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: '#000000',
     alignItems: 'center',
   },
   skipBtn: {
@@ -150,9 +150,10 @@ const styles = StyleSheet.create({
     zIndex: 10,
   },
   skipText: {
-    color: COLORS.textSecondary,
-    fontSize: 15,
-    fontWeight: '600',
+    color: '#F5C518',
+    fontFamily: 'Courier New',
+    fontSize: 12,
+    fontWeight: '900',
   },
   scroll: {
     flex: 1,
@@ -164,50 +165,54 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingHorizontal: 40,
   },
-  iconCircle: {
-    width: 130,
-    height: 130,
-    borderRadius: 65,
-    backgroundColor: 'rgba(245,197,24,0.12)',
-    borderWidth: 1.5,
-    borderColor: 'rgba(245,197,24,0.35)',
+  iconSquare: {
+    width: 90,
+    height: 90,
+    borderRadius: 0,
+    backgroundColor: '#0a0a0a',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+    borderLeftWidth: 2,
+    borderLeftColor: '#F5C518',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 40,
   },
   icon: {
-    fontSize: 60,
+    fontSize: 38,
   },
   title: {
-    fontSize: 28,
-    fontWeight: '800',
+    fontSize: 24,
+    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-condensed',
+    fontWeight: '900',
     color: COLORS.textPrimary,
     textAlign: 'center',
     marginBottom: 16,
-    letterSpacing: 0.3,
+    letterSpacing: -0.5,
   },
   subtitle: {
-    fontSize: 16,
+    fontSize: 12,
+    fontFamily: 'Courier New',
     color: COLORS.textSecondary,
     textAlign: 'center',
-    lineHeight: 24,
+    lineHeight: 18,
   },
   dots: {
     flexDirection: 'row',
     marginBottom: 32,
   },
   dot: {
-    height: 8,
-    borderRadius: 4,
+    height: 6,
+    borderRadius: 0,
     marginHorizontal: 4,
   },
   dotActive: {
     width: 24,
-    backgroundColor: COLORS.primary,
+    backgroundColor: '#F5C518',
   },
   dotInactive: {
-    width: 8,
-    backgroundColor: COLORS.border,
+    width: 6,
+    backgroundColor: '#333333',
   },
   buttonArea: {
     width: '100%',
@@ -215,16 +220,18 @@ const styles = StyleSheet.create({
     paddingBottom: 48,
   },
   primaryBtn: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 14,
+    backgroundColor: '#F5C518',
+    borderRadius: 0,
     paddingVertical: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   primaryBtnText: {
-    color: COLORS.background,
-    fontSize: 17,
-    fontWeight: '800',
-    letterSpacing: 0.5,
+    color: '#000000',
+    fontSize: 13,
+    fontFamily: 'Courier New',
+    fontWeight: '900',
   },
 });
 

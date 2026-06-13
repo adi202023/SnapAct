@@ -7,23 +7,24 @@ import {
   TouchableOpacity,
   StatusBar,
   Alert,
+  Switch,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import ProfileTag from '../components/ProfileTag';
 import ResultCard from '../components/ResultCard';
-import { getProfile, getScanHistory, clearHistory } from '../services/storageService';
+import { getProfile, saveProfile, getScanHistory, clearHistory } from '../services/storageService';
 import { COLORS } from '../constants/colors';
 
 /**
- * ProfileScreen — displays the user's full profile, scan history, and edit button.
+ * ProfileScreen — redesigned in Raw Terminal / Precision Instrument style.
  */
 const ProfileScreen = ({ navigation }) => {
   const [profile, setProfile] = useState(null);
   const [history, setHistory] = useState([]);
 
-  /** Reload on every focus so edits reflect immediately */
   useFocusEffect(
     useCallback(() => {
       (async () => {
@@ -35,6 +36,17 @@ const ProfileScreen = ({ navigation }) => {
     }, [])
   );
 
+  const handleToggleOnDevice = async (value) => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const updatedProfile = { ...profile, onDeviceMode: value };
+    const success = await saveProfile(updatedProfile);
+    if (success) {
+      setProfile(updatedProfile);
+    } else {
+      Alert.alert('SYS_ERR', 'Failed to update system buffer settings.');
+    }
+  };
+
   const handleEdit = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     navigation.navigate('ProfileSetup', { editMode: true });
@@ -43,12 +55,12 @@ const ProfileScreen = ({ navigation }) => {
   const handleClearHistory = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     Alert.alert(
-      'Clear History',
-      'This will permanently delete all your scan history. Continue?',
+      'PURGE HISTORY',
+      'This will permanently delete all scan records from memory. Purge?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Clear',
+          text: 'PURGE',
           style: 'destructive',
           onPress: async () => {
             await clearHistory();
@@ -65,12 +77,12 @@ const ProfileScreen = ({ navigation }) => {
       <SafeAreaView style={styles.safe}>
         <View style={styles.empty}>
           <Text style={styles.emptyIcon}>👤</Text>
-          <Text style={styles.emptyTitle}>No profile yet</Text>
+          <Text style={styles.emptyTitle}>NO PROFILE FOUND IN BUFFER</Text>
           <TouchableOpacity
             style={styles.setupBtn}
             onPress={() => navigation.navigate('ProfileSetup')}
           >
-            <Text style={styles.setupBtnText}>Set Up Profile</Text>
+            <Text style={styles.setupBtnText}>INITIALIZE PROFILE</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -79,13 +91,13 @@ const ProfileScreen = ({ navigation }) => {
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
+      <StatusBar barStyle="light-content" backgroundColor="#000000" />
 
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.heading}>My Profile</Text>
+        <Text style={styles.heading}>USER_PROFILE</Text>
         <TouchableOpacity style={styles.editBtn} onPress={handleEdit}>
-          <Text style={styles.editBtnText}>Edit ✏️</Text>
+          <Text style={styles.editBtnText}>EDIT ✏️</Text>
         </TouchableOpacity>
       </View>
 
@@ -104,7 +116,7 @@ const ProfileScreen = ({ navigation }) => {
               ))}
             </View>
           ) : (
-            <Text style={styles.none}>None added</Text>
+            <Text style={styles.none}>NO MEDICINES ON RECORD</Text>
           )}
         </View>
 
@@ -118,7 +130,7 @@ const ProfileScreen = ({ navigation }) => {
               ))}
             </View>
           ) : (
-            <Text style={styles.none}>None added</Text>
+            <Text style={styles.none}>NO ALLERGIES ON RECORD</Text>
           )}
         </View>
 
@@ -127,6 +139,28 @@ const ProfileScreen = ({ navigation }) => {
           <Text style={styles.sectionLabel}>🌐 Language</Text>
           <View style={styles.infoCard}>
             <Text style={styles.infoValue}>{profile.language || 'English'}</Text>
+          </View>
+        </View>
+
+        {/* Settings */}
+        <View style={styles.section}>
+          <Text style={styles.sectionLabel}>⚙️ Settings</Text>
+          <View style={styles.infoCard}>
+            <View style={styles.settingsRow}>
+              <View style={styles.settingsLabelCol}>
+                <Text style={styles.settingsTitle}>On-Device AI Mode</Text>
+                <Text style={styles.settingsDesc}>
+                  Process everything locally on your device without an internet connection.
+                </Text>
+              </View>
+              <Switch
+                value={profile.onDeviceMode || false}
+                onValueChange={handleToggleOnDevice}
+                trackColor={{ false: '#111111', true: 'rgba(68, 221, 136, 0.4)' }}
+                thumbColor={profile.onDeviceMode ? COLORS.success : '#555555'}
+                ios_backgroundColor="#111111"
+              />
+            </View>
           </View>
         </View>
 
@@ -148,10 +182,10 @@ const ProfileScreen = ({ navigation }) => {
         {/* Scan History */}
         <View style={styles.section}>
           <View style={styles.historyHeader}>
-            <Text style={styles.sectionLabel}>🕒 Scan History</Text>
+            <Text style={styles.sectionLabel}>🕒 History</Text>
             {history.length > 0 && (
               <TouchableOpacity onPress={handleClearHistory}>
-                <Text style={styles.clearText}>Clear all</Text>
+                <Text style={styles.clearText}>PURGE ALL</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -160,7 +194,7 @@ const ProfileScreen = ({ navigation }) => {
             history.map((scan) => <ResultCard key={scan.id} scan={scan} />)
           ) : (
             <View style={styles.historyEmpty}>
-              <Text style={styles.none}>No scans yet</Text>
+              <Text style={styles.none}>NO SCAN HISTORICAL DATA FOUND</Text>
             </View>
           )}
         </View>
@@ -172,7 +206,7 @@ const ProfileScreen = ({ navigation }) => {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: '#000000',
   },
   header: {
     flexDirection: 'row',
@@ -181,24 +215,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: '#1a1a1a',
   },
   heading: {
-    fontSize: 22,
-    fontWeight: '800',
+    fontSize: 26,
+    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-condensed',
+    fontWeight: '900',
     color: COLORS.textPrimary,
+    letterSpacing: -0.5,
   },
   editBtn: {
-    backgroundColor: COLORS.card,
+    backgroundColor: '#0a0a0a',
     borderWidth: 1,
-    borderColor: COLORS.border,
-    borderRadius: 10,
+    borderColor: '#1a1a1a',
+    borderRadius: 0,
     paddingHorizontal: 14,
     paddingVertical: 8,
   },
   editBtnText: {
     color: COLORS.primary,
-    fontSize: 13,
+    fontSize: 12,
+    fontFamily: 'Courier New',
     fontWeight: '700',
   },
   scroll: { flex: 1 },
@@ -211,12 +248,13 @@ const styles = StyleSheet.create({
     marginTop: 22,
   },
   sectionLabel: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textSecondary,
+    fontSize: 11,
+    fontFamily: 'Courier New',
+    fontWeight: '900',
+    color: '#F5C518',
     letterSpacing: 0.5,
     textTransform: 'uppercase',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   tagsRow: {
     flexDirection: 'row',
@@ -224,48 +262,76 @@ const styles = StyleSheet.create({
   },
   none: {
     color: COLORS.textMuted,
-    fontSize: 14,
+    fontSize: 12,
+    fontFamily: 'Courier New',
     fontStyle: 'italic',
   },
   infoCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 12,
+    backgroundColor: '#0a0a0a',
+    borderRadius: 0,
     padding: 14,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: '#1a1a1a',
+    borderLeftWidth: 2,
+    borderLeftColor: '#F5C518',
   },
   infoLabel: {
     color: COLORS.textSecondary,
-    fontSize: 11,
+    fontFamily: 'Courier New',
+    fontSize: 9,
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 3,
   },
   infoValue: {
     color: COLORS.textPrimary,
-    fontSize: 16,
-    fontWeight: '600',
+    fontFamily: 'Courier New',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  settingsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  settingsLabelCol: {
+    flex: 1,
+    marginRight: 16,
+  },
+  settingsTitle: {
+    color: COLORS.textPrimary,
+    fontFamily: 'Courier New',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 4,
+  },
+  settingsDesc: {
+    color: COLORS.textSecondary,
+    fontFamily: 'Courier New',
+    fontSize: 10,
+    lineHeight: 14,
   },
   historyHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   clearText: {
     color: COLORS.danger,
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 11,
+    fontFamily: 'Courier New',
+    fontWeight: '700',
   },
   historyEmpty: {
     paddingVertical: 20,
     alignItems: 'center',
   },
-  // No profile state
   empty: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 22,
   },
   emptyIcon: {
     fontSize: 50,
@@ -273,20 +339,25 @@ const styles = StyleSheet.create({
   },
   emptyTitle: {
     color: COLORS.textSecondary,
-    fontSize: 18,
+    fontFamily: 'Courier New',
+    fontSize: 14,
     fontWeight: '700',
     marginBottom: 20,
+    textAlign: 'center',
   },
   setupBtn: {
     backgroundColor: COLORS.primary,
-    borderRadius: 14,
+    borderRadius: 0,
     paddingVertical: 14,
     paddingHorizontal: 32,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   setupBtnText: {
-    color: COLORS.background,
-    fontSize: 16,
-    fontWeight: '800',
+    color: '#000000',
+    fontFamily: 'Courier New',
+    fontSize: 14,
+    fontWeight: '900',
   },
 });
 

@@ -76,7 +76,11 @@ const callGeminiWithRotation = async (requestBody) => {
     }
 
     // Other errors (404 model not found, 400 bad request, etc.) — log and try next
-    console.error(`[SnapAct] ${model} error ${status}:`, JSON.stringify(data?.error?.message || data));
+    if (status === 0) {
+      console.warn(`[SnapAct] ${model} network error (offline):`, data?.error?.message);
+    } else {
+      console.warn(`[SnapAct] ${model} error ${status}:`, JSON.stringify(data?.error?.message || data));
+    }
   }
   return null;
 };
@@ -233,14 +237,14 @@ export const analyzeImageWithContext = async (base64Image, userProfile, scanMode
     const rawText = await callGeminiWithRotation(requestBody);
 
     if (!rawText) {
-      console.error('geminiService: All models failed or returned empty responses.');
+      console.warn('geminiService: All models failed or returned empty responses.');
       return buildFallbackResult(scanMode, 'All AI models are currently busy. Please try again in a minute.');
     }
 
     // Robustly extract JSON — handles markdown fences, preamble text, and truncation.
     const firstBrace = rawText.indexOf('{');
     if (firstBrace === -1) {
-      console.error('geminiService: No JSON found in response:', rawText.slice(0, 200));
+      console.warn('geminiService: No JSON found in response:', rawText.slice(0, 200));
       return buildFallbackResult(scanMode, 'AI response was not in expected format.');
     }
 
@@ -267,7 +271,11 @@ export const analyzeImageWithContext = async (base64Image, userProfile, scanMode
       scanMode,
     };
   } catch (error) {
-    console.error('geminiService.analyzeImageWithContext error:', error);
+    if (error.message?.toLowerCase().includes('network') || error.message?.toLowerCase().includes('fetch')) {
+      console.warn('geminiService.analyzeImageWithContext offline/network warning:', error.message);
+    } else {
+      console.warn('geminiService.analyzeImageWithContext error:', error);
+    }
     return buildFallbackResult(scanMode, error.message);
   }
 };
@@ -316,7 +324,7 @@ export const analyzeTextWithContext = async (extractedText, userProfile, scanMod
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error('geminiService: API responded with error:', errText);
+      console.warn('geminiService: API responded with error:', errText);
       return buildFallbackResult(scanMode, 'API error — could not analyze content.');
     }
 
@@ -324,14 +332,14 @@ export const analyzeTextWithContext = async (extractedText, userProfile, scanMod
     const rawText = json?.candidates?.[0]?.content?.parts?.[0]?.text;
 
     if (!rawText) {
-      console.error('geminiService: Empty response from Gemini');
+      console.warn('geminiService: Empty response from Gemini');
       return buildFallbackResult(scanMode, 'Empty response from AI.');
     }
 
     // Robustly extract JSON — handles markdown fences, preamble text, and truncation.
     const firstBrace = rawText.indexOf('{');
     if (firstBrace === -1) {
-      console.error('geminiService: No JSON object found in response:', rawText.slice(0, 200));
+      console.warn('geminiService: No JSON object found in response:', rawText.slice(0, 200));
       return buildFallbackResult(scanMode, 'AI response was not in expected format.');
     }
 
@@ -362,7 +370,11 @@ export const analyzeTextWithContext = async (extractedText, userProfile, scanMod
     const parsed = JSON.parse(jsonStr);
     return parsed;
   } catch (error) {
-    console.error('geminiService.analyzeTextWithContext error:', error);
+    if (error.message?.toLowerCase().includes('network') || error.message?.toLowerCase().includes('fetch')) {
+      console.warn('geminiService.analyzeTextWithContext offline/network warning:', error.message);
+    } else {
+      console.warn('geminiService.analyzeTextWithContext error:', error);
+    }
     return buildFallbackResult(scanMode, error.message);
   }
 };

@@ -55,11 +55,13 @@ const ResultCard = ({ scan }) => {
 const styles = StyleSheet.create({
   card: {
     backgroundColor: COLORS.card,
-    borderRadius: 12,
+    borderRadius: 0,
     padding: 14,
     marginBottom: 10,
     borderWidth: 1,
     borderColor: COLORS.border,
+    borderLeftWidth: 2,
+    borderLeftColor: COLORS.primary,
   },
   row: {
     flexDirection: 'row',
@@ -75,24 +77,27 @@ const styles = StyleSheet.create({
   },
   detected: {
     color: COLORS.textPrimary,
-    fontSize: 14,
+    fontSize: 13,
+    fontFamily: 'Courier New',
     fontWeight: '700',
     marginBottom: 3,
   },
   insight: {
     color: COLORS.textSecondary,
-    fontSize: 12,
-    lineHeight: 17,
+    fontSize: 11,
+    fontFamily: 'Courier New',
+    lineHeight: 16,
     marginBottom: 4,
   },
   timestamp: {
     color: COLORS.textMuted,
-    fontSize: 11,
+    fontSize: 10,
+    fontFamily: 'Courier New',
   },
   dot: {
     width: 8,
     height: 8,
-    borderRadius: 4,
+    borderRadius: 0,
     marginTop: 5,
     marginLeft: 8,
   },

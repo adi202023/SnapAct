@@ -19,13 +19,12 @@ const Stack = createStackNavigator();
 const Tab = createBottomTabNavigator();
 
 /**
- * Bottom tab icon component — renders emoji + label, highlighted in gold when active.
+ * Bottom tab icon component — simple icons only, no labels, 16px active underline.
  */
-const TabIcon = ({ icon, label, focused }) => (
+const TabIcon = ({ icon, focused }) => (
   <View style={tabStyles.iconWrapper}>
     <Text style={tabStyles.iconEmoji}>{icon}</Text>
-    <Text style={[tabStyles.label, focused && tabStyles.labelActive]}>{label}</Text>
-    {focused && <View style={tabStyles.activeDot} />}
+    {focused && <View style={tabStyles.activeUnderline} />}
   </View>
 );
 
@@ -45,7 +44,7 @@ const MainTabNavigator = () => (
       component={HomeScreen}
       options={{
         tabBarIcon: ({ focused }) => (
-          <TabIcon icon="🏠" label="Home" focused={focused} />
+          <TabIcon icon="🏠" focused={focused} />
         ),
       }}
     />
@@ -75,7 +74,7 @@ const MainTabNavigator = () => (
       component={ProfileScreen}
       options={{
         tabBarIcon: ({ focused }) => (
-          <TabIcon icon="👤" label="Profile" focused={focused} />
+          <TabIcon icon="👤" focused={focused} />
         ),
       }}
     />
@@ -108,53 +107,38 @@ const AppNavigator = () => (
 
 const tabStyles = StyleSheet.create({
   bar: {
-    backgroundColor: '#111111',
+    backgroundColor: '#0a0a0a',
     borderTopColor: COLORS.border,
     borderTopWidth: 1,
-    height: 72,
-    paddingBottom: 8,
+    height: 64,
   },
   iconWrapper: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 6,
+    height: '100%',
   },
   iconEmoji: {
     fontSize: 22,
-    marginBottom: 3,
   },
-  label: {
-    fontSize: 10,
-    color: COLORS.textSecondary,
-    fontWeight: '600',
-  },
-  labelActive: {
-    color: COLORS.primary,
-  },
-  activeDot: {
+  activeUnderline: {
     position: 'absolute',
-    bottom: -8,
-    width: 4,
-    height: 4,
-    borderRadius: 2,
+    bottom: 4,
+    width: 16,
+    height: 2,
     backgroundColor: COLORS.primary,
   },
   centerBtn: {
-    width: 58,
-    height: 58,
-    borderRadius: 29,
+    width: 48,
+    height: 48,
+    borderRadius: 0,
     backgroundColor: COLORS.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 24,
-    shadowColor: COLORS.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.7,
-    shadowRadius: 12,
-    elevation: 12,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
   },
   centerBtnIcon: {
-    fontSize: 26,
+    fontSize: 22,
   },
   centerBtnTouchable: {
     alignItems: 'center',

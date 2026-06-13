@@ -9,37 +9,44 @@ import {
   Animated,
   Linking,
   Alert,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
-import ActionButton from '../components/ActionButton';
+import OnDevicePanel from '../components/OnDevicePanel';
 import { COLORS } from '../constants/colors';
 
 /**
- * ResultScreen — the "money screen."
- * Displays detected item, status banner, personalized insight, condition badges, and action buttons.
+ * ResultScreen — redesigned in Raw Terminal / Precision Instrument style.
  */
 const ResultScreen = ({ navigation, route }) => {
   const { result, mode } = route?.params || {};
-  const slideAnim = useRef(new Animated.Value(60)).current;
-  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  const pillSlideAnim = useRef(new Animated.Value(-100)).current;
+  const card1Opacity = useRef(new Animated.Value(0)).current;
+  const card2Opacity = useRef(new Animated.Value(0)).current;
+  const card3Opacity = useRef(new Animated.Value(0)).current;
+  const card4Opacity = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
-    // Slide up + fade in animation on mount
-    Animated.parallel([
-      Animated.timing(slideAnim, {
+    // Precise staggered animations on mount
+    Animated.sequence([
+      // 1. Status banner slides down from top
+      Animated.timing(pillSlideAnim, {
         toValue: 0,
-        duration: 450,
+        duration: 350,
         useNativeDriver: true,
       }),
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 450,
-        useNativeDriver: true,
-      }),
+      // 2. Remaining segments fade in with 100ms stagger
+      Animated.stagger(100, [
+        Animated.timing(card1Opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+        Animated.timing(card2Opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+        Animated.timing(card3Opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+        Animated.timing(card4Opacity, { toValue: 1, duration: 250, useNativeDriver: true }),
+      ]),
     ]).start();
 
-    // Haptic feedback based on status
+    // Haptic response
     if (result?.status === 'danger') {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } else if (result?.status === 'warning') {
@@ -52,36 +59,51 @@ const ResultScreen = ({ navigation, route }) => {
   if (!result) {
     return (
       <SafeAreaView style={styles.safe}>
-        <Text style={styles.errorText}>No result to display.</Text>
+        <Text style={styles.errorText}>NO RESULT IN BUFFER.</Text>
       </SafeAreaView>
     );
   }
 
   const { detected, status, insight, action, actionType, actionPayload } = result;
 
-  /** Returns banner color based on status */
+  /** Solid background configs according to specifications */
   const getStatusConfig = () => {
     switch (status) {
       case 'danger':
         return {
-          bg: 'rgba(255,68,68,0.18)',
-          border: COLORS.danger,
-          text: '🔴  DANGER',
-          color: COLORS.danger,
+          bg: '#ff0000',
+          border: '#ff0000',
+          text: 'CRITICAL STATUS: DANGER',
+          color: '#ffffff',
+          riskColor: '#ff4444',
+          riskVal: 85,
         };
       case 'warning':
         return {
-          bg: 'rgba(255,140,0,0.18)',
-          border: COLORS.warning,
-          text: '🟡  WARNING',
-          color: COLORS.warning,
+          bg: '#F5C518',
+          border: '#F5C518',
+          text: 'CRITICAL STATUS: WARNING',
+          color: '#000000',
+          riskColor: '#F5C518',
+          riskVal: 50,
         };
-      default:
+      case 'needs_attention':
         return {
-          bg: 'rgba(68,221,136,0.18)',
-          border: COLORS.success,
-          text: '🟢  SAFE',
-          color: COLORS.success,
+          bg: '#E8F318',
+          border: '#E8F318',
+          text: 'CRITICAL STATUS: ATTENTION',
+          color: '#000000',
+          riskColor: '#E8F318',
+          riskVal: 40,
+        };
+      default: // safe
+        return {
+          bg: '#44DD88',
+          border: '#44DD88',
+          text: 'CRITICAL STATUS: SAFE / SECURE',
+          color: '#000000',
+          riskColor: '#44DD88',
+          riskVal: 10,
         };
     }
   };
@@ -101,10 +123,8 @@ const ResultScreen = ({ navigation, route }) => {
     }
   };
 
-  /** Handle the primary action button */
   const handleAction = async () => {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-
     if (actionType === 'whatsapp' && actionPayload) {
       const encoded = encodeURIComponent(actionPayload);
       const url = `whatsapp://send?text=${encoded}`;
@@ -112,161 +132,55 @@ const ResultScreen = ({ navigation, route }) => {
       if (canOpen) {
         await Linking.openURL(url);
       } else {
-        Alert.alert('WhatsApp not installed', 'Please install WhatsApp to use this action.');
+        Alert.alert('LINK_FAILED', 'WhatsApp messenger is not configured.');
       }
-      return;
-    }
-
-    if (actionType === 'url' && actionPayload) {
+    } else if (actionType === 'url' && actionPayload) {
       const canOpen = await Linking.canOpenURL(actionPayload);
       if (canOpen) {
         await Linking.openURL(actionPayload);
       } else {
-        Alert.alert('Cannot open URL', actionPayload);
+        Alert.alert('LINK_FAILED', `Cannot open payload: ${actionPayload}`);
       }
-      return;
     }
   };
 
-  /** Render condition badge if available */
   const renderConditionBadge = () => {
     if (!result?.condition) return null;
-
-    let badgeText = '';
-    let badgeColor = '';
-    let badgeBg = '';
-
-    switch (result.condition) {
-      case 'needs_cleaning':
-        badgeText = '🧹 Needs Cleaning';
-        badgeColor = COLORS.warning;
-        badgeBg = 'rgba(255,140,0,0.12)';
-        break;
-      case 'needs_repair':
-        badgeText = '🔧 Needs Repair';
-        badgeColor = '#FF8C00';
-        badgeBg = 'rgba(255,140,0,0.12)';
-        break;
-      case 'needs_replacement':
-        badgeText = '🔄 Needs Replacement';
-        badgeColor = COLORS.danger;
-        badgeBg = 'rgba(255,68,68,0.12)';
-        break;
-      case 'expired':
-        badgeText = '⚠️ Expired';
-        badgeColor = COLORS.danger;
-        badgeBg = 'rgba(255,68,68,0.12)';
-        break;
-      case 'unsafe':
-        badgeText = '🚨 Unsafe';
-        badgeColor = COLORS.danger;
-        badgeBg = 'rgba(255,68,68,0.18)';
-        break;
-      case 'excellent':
-      case 'good':
-        badgeText = '✅ Good Condition';
-        badgeColor = COLORS.success;
-        badgeBg = 'rgba(68,221,136,0.12)';
-        break;
-      default:
-        badgeText = `ℹ️ ${result.condition.replace('_', ' ')}`;
-        badgeColor = COLORS.textSecondary;
-        badgeBg = 'rgba(150,150,150,0.12)';
-    }
-
+    let badgeText = result.condition.replace('_', ' ').toUpperCase();
     return (
-      <View
-        style={[
-          styles.badge,
-          {
-            backgroundColor: badgeBg,
-            borderColor: badgeColor,
-            borderWidth: 1,
-            alignSelf: 'flex-start',
-            marginTop: 6,
-          },
-        ]}
-      >
-        <Text style={[styles.badgeText, { color: badgeColor, fontWeight: '700', fontSize: 12 }]}>
-          {badgeText}
-        </Text>
+      <View style={styles.badge}>
+        <Text style={styles.badgeText}>COND: {badgeText}</Text>
       </View>
     );
   };
 
-  /** Render urgency pill if available */
   const renderUrgencyPill = () => {
     if (!result?.urgency) return null;
-
-    let pillText = '';
-    let pillColor = '';
-    let pillBg = '';
-
-    switch (result.urgency) {
-      case 'immediate':
-        pillText = 'Act Now';
-        pillColor = COLORS.danger;
-        pillBg = 'rgba(255,68,68,0.15)';
-        break;
-      case 'soon':
-        pillText = 'Within a week';
-        pillColor = COLORS.warning;
-        pillBg = 'rgba(255,140,0,0.15)';
-        break;
-      case 'low':
-        pillText = 'When convenient';
-        pillColor = COLORS.textSecondary;
-        pillBg = 'rgba(150,150,150,0.15)';
-        break;
-      default:
-        pillText = result.urgency;
-        pillColor = COLORS.textSecondary;
-        pillBg = 'rgba(150,150,150,0.15)';
-    }
-
     return (
-      <View
-        style={[
-          styles.urgencyPill,
-          {
-            backgroundColor: pillBg,
-            borderRadius: 8,
-            paddingHorizontal: 10,
-            paddingVertical: 3,
-            alignSelf: 'flex-start',
-            marginTop: 6,
-          },
-        ]}
-      >
-        <Text style={{ color: pillColor, fontSize: 11, fontWeight: '700' }}>
-          ⏱️ {pillText}
-        </Text>
+      <View style={[styles.badge, { marginLeft: 6 }]}>
+        <Text style={styles.badgeText}>URG: {result.urgency.toUpperCase()}</Text>
       </View>
     );
   };
 
-  /** Render Temporary Solution section if it exists */
   const renderTemporarySolutionSection = () => {
     if (!result?.temporarySolution) return null;
-
     return (
       <View style={styles.tempSolCard}>
-        <Text style={styles.tempSolTitle}>⏱️ Do This Right Now</Text>
+        <Text style={styles.tempSolTitle}>// DO THIS RIGHT NOW</Text>
         <Text style={styles.tempSolBody}>{result.temporarySolution}</Text>
       </View>
     );
   };
 
-  /** Render How-To section if custom details exist */
   const renderHowToSection = () => {
     if (!result?.howTo && !result?.conditionDetail) return null;
-
     return (
       <View style={styles.howToCard}>
-        <Text style={styles.howToTitle}>🛠️ What to do</Text>
+        <Text style={styles.howToTitle}>// STEPS_TO_RESOLVE</Text>
         {result.conditionDetail ? (
           <Text style={styles.conditionDetailText}>
-            {result.conditionDetail}
+            OBS: {result.conditionDetail}
           </Text>
         ) : null}
         {result.howTo ? (
@@ -276,11 +190,32 @@ const ResultScreen = ({ navigation, route }) => {
     );
   };
 
+  // Highlights first word in gold, rest in white
+  const renderDetectedName = () => {
+    const parts = detected.split(' ');
+    if (parts.length > 1) {
+      return (
+        <Text style={styles.detectedText}>
+          <Text style={{ color: '#F5C518' }}>{parts[0].toUpperCase()}</Text>{' '}
+          {parts.slice(1).join(' ').toUpperCase()}
+        </Text>
+      );
+    }
+    return <Text style={styles.detectedText}>{detected.toUpperCase()}</Text>;
+  };
+
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={COLORS.background} />
+      <StatusBar barStyle="light-content" backgroundColor="#000000" />
 
-      {/* Top nav row */}
+      {/* Top sliding solid banner */}
+      <Animated.View style={[styles.statusBanner, { backgroundColor: statusConfig.bg, transform: [{ translateY: pillSlideAnim }] }]}>
+        <Text style={[styles.statusText, { color: statusConfig.color }]}>
+          {statusConfig.text}
+        </Text>
+      </Animated.View>
+
+      {/* Navigation Row */}
       <View style={styles.topNav}>
         <TouchableOpacity
           onPress={() => {
@@ -291,98 +226,102 @@ const ResultScreen = ({ navigation, route }) => {
         >
           <Text style={styles.backText}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.navTitle}>Analysis Result</Text>
-        <View style={{ width: 42 }} />
+        <Text style={styles.navTitle}>SYSTEM_BUFFER_RESULT</Text>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
-        <Animated.View
-          style={{
-            opacity: fadeAnim,
-            transform: [{ translateY: slideAnim }],
-          }}
-        >
-          {/* Detected item */}
+        {/* Segment 1: Header / Detected Info */}
+        <Animated.View style={{ opacity: card1Opacity }}>
           <View style={styles.detectedCard}>
             <Text style={styles.detectedIcon}>{getModeIcon()}</Text>
             <View style={styles.detectedRight}>
-              <Text style={styles.detectedLabel}>Detected</Text>
-              <Text style={styles.detectedText}>{detected}</Text>
-              {renderConditionBadge()}
-              {renderUrgencyPill()}
+              <Text style={styles.detectedLabel}>// SCAN_TARGET_IDENTIFIED</Text>
+              {renderDetectedName()}
+              <View style={styles.badgeRow}>
+                {renderConditionBadge()}
+                {renderUrgencyPill()}
+              </View>
             </View>
           </View>
+        </Animated.View>
 
-          {/* Status banner */}
-          <View
-            style={[
-              styles.statusBanner,
-              {
-                backgroundColor: statusConfig.bg,
-                borderColor: statusConfig.border,
-              },
-            ]}
-          >
-            <Text style={[styles.statusText, { color: statusConfig.color }]}>
-              {statusConfig.text}
-            </Text>
-          </View>
-
-          {/* AI Insight */}
+        {/* Segment 2: AI Insight & Risk Telemetry */}
+        <Animated.View style={{ opacity: card2Opacity }}>
           <View style={styles.insightCard}>
             <View style={styles.insightHeader}>
-              <Text style={styles.insightTitle}>SnapAct says</Text>
-              <View style={styles.aiChip}>
-                <Text style={styles.aiChipText}>AI • Personalized</Text>
+              <Text style={styles.insightTitle}>// AI INSIGHT</Text>
+              <View style={[styles.aiChip, result.source === 'local' && styles.aiChipLocal]}>
+                <Text style={[styles.aiChipText, result.source === 'local' && styles.aiChipTextLocal]}>
+                  {result.source === 'local' ? '🤖 LOCAL_AI' : 'CLOUD_LINK'}
+                </Text>
               </View>
             </View>
             <Text style={styles.insightText}>{insight}</Text>
           </View>
 
-          {/* Temporary Solution Section */}
-          {renderTemporarySolutionSection()}
+          {/* Risk Level Bar */}
+          <View style={styles.riskContainer}>
+            <View style={styles.riskHeader}>
+              <Text style={styles.riskLabel}>// RISK_LEVEL</Text>
+              <Text style={[styles.riskValue, { color: statusConfig.riskColor }]}>
+                {statusConfig.riskVal}%
+              </Text>
+            </View>
+            <View style={styles.riskTrack}>
+              <View style={[styles.riskFill, { width: `${statusConfig.riskVal}%`, backgroundColor: statusConfig.riskColor }]} />
+            </View>
+          </View>
+        </Animated.View>
 
-          {/* How-To Section */}
+        {/* Segment 3: Performance Telemetry (if local) */}
+        {result.source === 'local' && result.localMetrics && (
+          <Animated.View style={{ opacity: card3Opacity }}>
+            <OnDevicePanel metrics={result.localMetrics} />
+          </Animated.View>
+        )}
+
+        {/* Segment 4: Resolution & Actions */}
+        <Animated.View style={{ opacity: card4Opacity, marginTop: 12 }}>
+          {renderTemporarySolutionSection()}
           {renderHowToSection()}
 
-          {/* Action buttons */}
           <View style={styles.actionsSection}>
-            <Text style={styles.actionsTitle}>Recommended Action</Text>
+            <Text style={styles.actionsTitle}>// RECOMMENDATION_EXECUTION</Text>
 
             {actionType !== 'none' && action && (
-              <View style={styles.actionBtnWrapper}>
-                <ActionButton
-                  title={`${action} →`}
-                  onPress={handleAction}
-                  variant={status === 'danger' ? 'danger' : 'primary'}
-                />
-              </View>
+              <TouchableOpacity
+                style={styles.customActionBtn}
+                onPress={handleAction}
+              >
+                <Text style={styles.customActionText}>{action}</Text>
+                <Text style={styles.customActionArrow}>→</Text>
+              </TouchableOpacity>
             )}
 
-            {/* Scan Again */}
-            <View style={styles.actionBtnWrapper}>
-              <ActionButton
-                title="Scan Again"
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  navigation.navigate('Camera', { mode: mode || 'Auto' });
-                }}
-                variant="secondary"
-              />
-            </View>
-
-            {/* Back to Home */}
             <TouchableOpacity
-              style={styles.homeLink}
+              style={styles.customActionBtnSecondary}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                navigation.navigate('Camera', { mode: mode || 'Auto' });
+              }}
+            >
+              <Text style={styles.customActionTextSecondary}>SCAN TARGET RECAPTURE</Text>
+              <Text style={styles.customActionArrowSecondary}>↺</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.customActionBtnSecondary}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 navigation.navigate('Main');
               }}
             >
-              <Text style={styles.homeLinkText}>Back to Home</Text>
+              <Text style={styles.customActionTextSecondary}>RETURN TO CENTRAL HUB</Text>
+              <Text style={styles.customActionArrowSecondary}>⌂</Text>
             </TouchableOpacity>
           </View>
         </Animated.View>
@@ -394,7 +333,18 @@ const ResultScreen = ({ navigation, route }) => {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: COLORS.background,
+    backgroundColor: '#000000',
+  },
+  statusBanner: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusText: {
+    fontFamily: 'Courier New',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   topNav: {
     flexDirection: 'row',
@@ -403,26 +353,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
+    borderBottomColor: '#1a1a1a',
   },
   backBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: COLORS.card,
+    width: 40,
+    height: 40,
+    borderRadius: 0,
+    backgroundColor: '#0a0a0a',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: COLORS.border,
   },
   backText: {
     color: COLORS.textPrimary,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
   },
   navTitle: {
-    color: COLORS.textPrimary,
-    fontSize: 16,
+    color: '#F5C518',
+    fontFamily: 'Courier New',
+    fontSize: 12,
     fontWeight: '700',
   },
   content: {
@@ -433,172 +384,254 @@ const styles = StyleSheet.create({
   detectedCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 18,
+    backgroundColor: '#0a0a0a',
+    borderRadius: 0,
+    padding: 16,
     marginBottom: 14,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: '#1a1a1a',
+    borderLeftWidth: 2,
+    borderLeftColor: '#F5C518',
   },
   detectedIcon: {
-    fontSize: 38,
+    fontSize: 32,
     marginRight: 16,
   },
   detectedRight: {
     flex: 1,
   },
   detectedLabel: {
-    fontSize: 11,
+    fontSize: 9,
+    fontFamily: 'Courier New',
     color: COLORS.textSecondary,
-    letterSpacing: 1.5,
-    textTransform: 'uppercase',
+    letterSpacing: 1,
     marginBottom: 4,
   },
   detectedText: {
-    fontSize: 20,
-    fontWeight: '800',
+    fontSize: 22,
+    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-condensed',
+    fontWeight: '900',
     color: COLORS.textPrimary,
-    lineHeight: 25,
+    lineHeight: 26,
+    letterSpacing: -0.5,
   },
-  statusBanner: {
-    borderWidth: 1.5,
-    borderRadius: 12,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    marginBottom: 14,
-    alignItems: 'center',
+  badgeRow: {
+    flexDirection: 'row',
+    marginTop: 8,
   },
-  statusText: {
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 1,
+  badge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderWidth: 1,
+    borderColor: '#222222',
+    borderRadius: 0,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+  },
+  badgeText: {
+    fontSize: 8,
+    fontFamily: 'Courier New',
+    color: '#444444',
+    fontWeight: '700',
   },
   insightCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
-    padding: 18,
-    marginBottom: 24,
+    backgroundColor: '#0a0a0a',
+    borderRadius: 0,
+    padding: 16,
+    marginBottom: 14,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: '#1a1a1a',
+    borderLeftWidth: 2,
+    borderLeftColor: '#F5C518',
   },
   insightHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
   },
   insightTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.primary,
-    letterSpacing: 0.5,
+    fontSize: 11,
+    fontFamily: 'Courier New',
+    fontWeight: '900',
+    color: '#F5C518',
   },
   aiChip: {
     backgroundColor: 'rgba(245,197,24,0.12)',
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
+    borderRadius: 0,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
     borderWidth: 1,
     borderColor: 'rgba(245,197,24,0.25)',
   },
   aiChipText: {
-    fontSize: 10,
+    fontSize: 8,
+    fontFamily: 'Courier New',
     color: COLORS.primary,
-    fontWeight: '600',
+    fontWeight: '900',
+  },
+  aiChipLocal: {
+    backgroundColor: 'rgba(68,221,136,0.12)',
+    borderColor: 'rgba(68,221,136,0.35)',
+  },
+  aiChipTextLocal: {
+    color: COLORS.success,
   },
   insightText: {
-    color: COLORS.textPrimary,
-    fontSize: 15,
-    lineHeight: 23,
-    fontWeight: '400',
-  },
-  actionsSection: {
-    gap: 12,
-  },
-  actionsTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.textSecondary,
-    letterSpacing: 0.5,
-    marginBottom: 4,
-    textTransform: 'uppercase',
-  },
-  actionBtnWrapper: {
-    marginBottom: 4,
-  },
-  homeLink: {
-    alignItems: 'center',
-    paddingVertical: 14,
-  },
-  homeLinkText: {
-    color: COLORS.textSecondary,
-    fontSize: 14,
-  },
-  errorText: {
-    color: COLORS.textSecondary,
-    textAlign: 'center',
-    marginTop: 40,
-    fontSize: 16,
-  },
-  badge: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  badgeText: {
+    color: '#888888',
+    fontFamily: 'Courier New',
     fontSize: 12,
+    lineHeight: 18,
+    marginTop: 8,
   },
-  urgencyPill: {
-    borderRadius: 8,
+  riskContainer: {
+    marginBottom: 20,
+    backgroundColor: '#0a0a0a',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+    padding: 14,
+  },
+  riskHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  riskLabel: {
+    fontFamily: 'Courier New',
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#888888',
+  },
+  riskValue: {
+    fontFamily: 'Courier New',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  riskTrack: {
+    height: 2,
+    backgroundColor: '#111111',
+  },
+  riskFill: {
+    height: '100%',
+  },
+  tempSolCard: {
+    backgroundColor: '#0a0a0a',
+    borderRadius: 0,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+    borderLeftWidth: 2,
+    borderLeftColor: '#44DD88',
+  },
+  tempSolTitle: {
+    fontFamily: 'Courier New',
+    fontSize: 11,
+    fontWeight: '900',
+    color: '#44DD88',
+    marginBottom: 8,
+  },
+  tempSolBody: {
+    fontFamily: 'Courier New',
+    color: COLORS.textPrimary,
+    fontSize: 12,
+    lineHeight: 18,
   },
   howToCard: {
-    backgroundColor: COLORS.cardElevated,
-    borderRadius: 16,
-    padding: 18,
-    marginBottom: 24,
+    backgroundColor: '#0a0a0a',
+    borderRadius: 0,
+    padding: 16,
+    marginBottom: 20,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: '#1a1a1a',
   },
   howToTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: COLORS.primary,
+    fontSize: 11,
+    fontFamily: 'Courier New',
+    fontWeight: '900',
+    color: '#F5C518',
     marginBottom: 8,
-    textTransform: 'uppercase',
   },
   conditionDetailText: {
     color: COLORS.textPrimary,
-    fontSize: 14,
+    fontFamily: 'Courier New',
+    fontSize: 12,
     fontWeight: '600',
     marginBottom: 8,
     fontStyle: 'italic',
   },
   howToBody: {
     color: COLORS.textSecondary,
-    fontSize: 14,
-    lineHeight: 20,
+    fontFamily: 'Courier New',
+    fontSize: 12,
+    lineHeight: 18,
   },
-  tempSolCard: {
-    backgroundColor: 'rgba(245, 197, 24, 0.07)',
-    borderRadius: 16,
-    padding: 18,
-    marginBottom: 24,
-    borderWidth: 1.5,
-    borderColor: 'rgba(245, 197, 24, 0.25)',
+  actionsSection: {
+    gap: 8,
   },
-  tempSolTitle: {
-    fontSize: 14,
-    fontWeight: '800',
-    color: COLORS.primary,
-    marginBottom: 6,
-    textTransform: 'uppercase',
+  actionsTitle: {
+    fontSize: 10,
+    fontFamily: 'Courier New',
+    fontWeight: '700',
+    color: '#333333',
+    marginBottom: 4,
     letterSpacing: 0.5,
   },
-  tempSolBody: {
-    color: COLORS.textPrimary,
+  customActionBtn: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#F5C518',
+    borderRadius: 0,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    width: '100%',
+    marginBottom: 4,
+  },
+  customActionText: {
+    fontFamily: 'Courier New',
+    fontSize: 13,
+    fontWeight: '900',
+    color: '#000000',
+    textTransform: 'uppercase',
+  },
+  customActionArrow: {
+    fontFamily: 'Courier New',
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#000000',
+  },
+  customActionBtnSecondary: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+    borderRadius: 0,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    width: '100%',
+    marginBottom: 4,
+  },
+  customActionTextSecondary: {
+    fontFamily: 'Courier New',
+    fontSize: 12,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+    textTransform: 'uppercase',
+  },
+  customActionArrowSecondary: {
+    fontFamily: 'Courier New',
+    fontSize: 13,
+    fontWeight: '700',
+    color: COLORS.textSecondary,
+  },
+  errorText: {
+    color: COLORS.textSecondary,
+    fontFamily: 'Courier New',
+    textAlign: 'center',
+    marginTop: 40,
     fontSize: 14,
-    lineHeight: 20,
-    fontWeight: '500',
   },
 });
 

@@ -59,19 +59,21 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderRadius: 20,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    borderRadius: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     marginRight: 8,
     marginBottom: 8,
   },
   label: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: 12,
+    fontFamily: 'Courier New',
+    fontWeight: '700',
   },
   remove: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 12,
+    fontFamily: 'Courier New',
+    fontWeight: '900',
   },
 });
 

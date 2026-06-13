@@ -8,12 +8,11 @@ const CORNER_LENGTH = 40;
 const CORNER_THICKNESS = 3;
 
 /**
- * Animated gold corner-bracket scan overlay.
- * Renders 4 corner-only brackets (not a full rectangle) in the center of the screen.
- * Pulses opacity to give a live scanning feel.
+ * Animated corner-bracket scan overlay in cyber-terminal style.
  */
 const ScanOverlay = () => {
   const pulseAnim = useRef(new Animated.Value(1)).current;
+  const sweepAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     // Pulsing opacity animation loop
@@ -31,7 +30,21 @@ const ScanOverlay = () => {
         }),
       ])
     ).start();
+
+    // Sweep animation
+    Animated.loop(
+      Animated.timing(sweepAnim, {
+        toValue: FRAME_SIZE - 4,
+        duration: 2500,
+        useNativeDriver: true,
+      })
+    ).start();
   }, []);
+
+  const scanLineOpacity = sweepAnim.interpolate({
+    inputRange: [0, FRAME_SIZE * 0.1, FRAME_SIZE * 0.9, FRAME_SIZE - 4],
+    outputRange: [0, 1, 1, 0],
+  });
 
   return (
     <View style={styles.overlay} pointerEvents="none">
@@ -47,6 +60,21 @@ const ScanOverlay = () => {
           <View style={[styles.cornerH, { top: 0, right: 0 }]} />
           <View style={[styles.cornerV, { top: 0, right: 0 }]} />
         </View>
+
+        {/* Center Crosshair */}
+        <View style={styles.crosshairH} />
+        <View style={styles.crosshairV} />
+
+        {/* Sweeping scan line */}
+        <Animated.View
+          style={[
+            styles.scanLine,
+            {
+              transform: [{ translateY: sweepAnim }],
+              opacity: scanLineOpacity,
+            },
+          ]}
+        />
 
         {/* Bottom-left corner */}
         <View style={[styles.corner, styles.bottomLeft]}>
@@ -101,14 +129,41 @@ const styles = StyleSheet.create({
     width: CORNER_LENGTH,
     height: CORNER_THICKNESS,
     backgroundColor: COLORS.primary,
-    borderRadius: 2,
+    borderRadius: 0,
   },
   cornerV: {
     position: 'absolute',
     width: CORNER_THICKNESS,
     height: CORNER_LENGTH,
     backgroundColor: COLORS.primary,
-    borderRadius: 2,
+    borderRadius: 0,
+  },
+  crosshairH: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 30,
+    height: 1,
+    backgroundColor: 'rgba(245,197,24,0.5)',
+    marginLeft: -15,
+    marginTop: -0.5,
+  },
+  crosshairV: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 1,
+    height: 30,
+    backgroundColor: 'rgba(245,197,24,0.5)',
+    marginLeft: -0.5,
+    marginTop: -15,
+  },
+  scanLine: {
+    position: 'absolute',
+    left: 6,
+    right: 6,
+    height: 2,
+    backgroundColor: COLORS.primary,
   },
 });
 

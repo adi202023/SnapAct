@@ -1,11 +1,10 @@
 import React from 'react';
-import { TouchableOpacity, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { COLORS } from '../constants/colors';
 
 /**
- * Reusable gold primary action button with haptic feedback.
- * Supports primary (filled gold) and secondary (outlined) variants.
+ * Reusable primary action button with raw terminal style.
  */
 const ActionButton = ({
   title,
@@ -64,7 +63,7 @@ const ActionButton = ({
 
 const styles = StyleSheet.create({
   base: {
-    borderRadius: 14,
+    borderRadius: 0,
     paddingVertical: 16,
     paddingHorizontal: 24,
     alignItems: 'center',
@@ -77,7 +76,7 @@ const styles = StyleSheet.create({
   },
   secondary: {
     backgroundColor: 'transparent',
-    borderWidth: 1.5,
+    borderWidth: 1,
     borderColor: COLORS.primary,
   },
   danger: {
@@ -88,17 +87,19 @@ const styles = StyleSheet.create({
   },
   text: {
     fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+    fontFamily: Platform.OS === 'ios' ? 'Impact' : 'sans-serif-condensed',
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    textTransform: 'uppercase',
   },
   textPrimary: {
-    color: COLORS.background,
+    color: '#000000',
   },
   textSecondary: {
     color: COLORS.primary,
   },
   textDanger: {
-    color: COLORS.textPrimary,
+    color: '#FFFFFF',
   },
 });
 

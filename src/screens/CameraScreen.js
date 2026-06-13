@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,8 +12,10 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useFocusEffect } from '@react-navigation/native';
 import ScanOverlay from '../components/ScanOverlay';
 import { analyzeImageWithContext } from '../services/geminiService';
+import { analyzeLocally } from '../services/localAIService';
 import { getProfile, saveScan } from '../services/storageService';
 import { COLORS } from '../constants/colors';
 
@@ -23,12 +25,22 @@ import { COLORS } from '../constants/colors';
  * One API call per scan = no rate limit issues.
  */
 const CameraScreen = ({ navigation, route }) => {
-  const mode = route?.params?.mode || 'Auto';
+  const [currentMode, setCurrentMode] = useState(route?.params?.mode || 'Auto');
   const [permission, requestPermission] = useCameraPermissions();
   const [isCapturing, setIsCapturing] = useState(false);
   const [loadingText, setLoadingText] = useState('Capturing...');
+  const [onDeviceMode, setOnDeviceMode] = useState(false);
   const cameraRef = useRef(null);
   const captureScaleAnim = useRef(new Animated.Value(1)).current;
+
+  useFocusEffect(
+    useCallback(() => {
+      (async () => {
+        const userProfile = await getProfile();
+        setOnDeviceMode(!!userProfile?.onDeviceMode);
+      })();
+    }, [])
+  );
 
   /** Animate the capture button on press */
   const animateCaptureBtn = () => {
@@ -46,7 +58,7 @@ const CameraScreen = ({ navigation, route }) => {
     ]).start();
   };
 
-  /** Main capture handler — single Gemini Vision call handles everything */
+  /** Main capture handler — routes to local engine or cloud based on profile setting */
   const handleCapture = async () => {
     if (isCapturing || !cameraRef.current) return;
 
@@ -62,27 +74,30 @@ const CameraScreen = ({ navigation, route }) => {
         skipProcessing: true,
       });
 
-      setLoadingText('Analysing with AI...');
       const userProfile = await getProfile();
+      let result;
 
-      // Single Gemini Vision call: reads text + understands object + checks profile
-      const result = await analyzeImageWithContext(photo.base64, userProfile, mode);
+      if (userProfile?.onDeviceMode) {
+        // ── On-Device AI path (no internet needed) ──────────────────────────
+        setLoadingText('Local AI Engine processing...');
+        result = await analyzeLocally(userProfile, currentMode);
+      } else {
+        // ── Cloud AI path (Gemini Vision) ───────────────────────────────────
+        setLoadingText('Analysing with AI...');
+        result = await analyzeImageWithContext(photo.base64, userProfile, currentMode);
 
-      if (result?.error) {
-        setIsCapturing(false);
-        Alert.alert(
-          'Analysis Failed',
-          result.insight || 'Could not analyse this image. Please try again.',
-          [{ text: 'Try Again', style: 'default' }]
-        );
-        return;
+        // Auto fallback to on-device engine if API/network call fails
+        if (result?.error) {
+          console.warn('[SnapAct] Cloud analysis failed. Falling back to local AI engine...');
+          setLoadingText('On-device fallback active...');
+          result = await analyzeLocally(userProfile, currentMode);
+          result.insight = `📶 Offline fallback active. Switched to On-Device AI.\n\n${result.insight}`;
+        }
       }
 
-      // Save to history and navigate
       await saveScan({ ...result, rawText: result.detected });
-
       setIsCapturing(false);
-      navigation.navigate('Result', { result, mode });
+      navigation.navigate('Result', { result, mode: currentMode });
     } catch (error) {
       console.error('CameraScreen.handleCapture error:', error);
       setIsCapturing(false);
@@ -155,10 +170,58 @@ const CameraScreen = ({ navigation, route }) => {
         >
           <Text style={styles.backBtnText}>←</Text>
         </TouchableOpacity>
-        <View style={styles.modeBadge}>
-          <Text style={styles.modeBadgeText}>{mode}</Text>
+        <View style={styles.modePillsContainer}>
+          {[
+            { label: 'AUTO', val: 'Auto' },
+            { label: 'MED', val: 'Medicine' },
+            { label: 'OBJ', val: 'Food/Menu' },
+            { label: 'DOC', val: 'Document' },
+          ].map((item) => {
+            const active = currentMode === item.val;
+            return (
+              <TouchableOpacity
+                key={item.label}
+                style={[styles.modePill, active && styles.modePillActive]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setCurrentMode(item.val);
+                }}
+              >
+                <Text style={[styles.modePillText, active && styles.modePillTextActive]}>
+                  {item.label}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <View style={styles.topBarRight}>
+          {onDeviceMode && (
+            <View style={styles.localBadge}>
+              <Text style={styles.localBadgeText}>⚡ LOC</Text>
+            </View>
+          )}
         </View>
       </SafeAreaView>
+
+      {/* Right HUD column */}
+      <View style={styles.rightHud} pointerEvents="none">
+        <View style={styles.hudItem}>
+          <Text style={styles.hudLabel}>RES</Text>
+          <Text style={styles.hudValue}>4K</Text>
+        </View>
+        <View style={styles.hudItem}>
+          <Text style={styles.hudLabel}>AI</Text>
+          <Text style={styles.hudValue}>ON</Text>
+        </View>
+        <View style={styles.hudItem}>
+          <Text style={styles.hudLabel}>GPS</Text>
+          <Text style={styles.hudValue}>OK</Text>
+        </View>
+        <View style={styles.hudItem}>
+          <Text style={styles.hudLabel}>PRF</Text>
+          <Text style={styles.hudValue}>LOADED</Text>
+        </View>
+      </View>
 
       {/* Bottom controls */}
       <View style={styles.bottomBar}>
@@ -210,33 +273,90 @@ const styles = StyleSheet.create({
     paddingTop: 10,
   },
   backBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    width: 40,
+    height: 40,
+    borderRadius: 0,
+    backgroundColor: '#0a0a0a',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderColor: '#222222',
     alignItems: 'center',
     justifyContent: 'center',
   },
   backBtnText: {
     color: COLORS.textPrimary,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
   },
-  modeBadge: {
-    backgroundColor: 'rgba(245,197,24,0.18)',
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    borderRadius: 20,
-    paddingHorizontal: 14,
+  topBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    width: 50,
+  },
+  modePillsContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  modePill: {
+    paddingHorizontal: 8,
     paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: '#222222',
+    borderRadius: 0,
+    backgroundColor: 'rgba(0,0,0,0.6)',
   },
-  modeBadgeText: {
-    color: COLORS.primary,
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+  modePillActive: {
+    borderColor: '#F5C518',
+  },
+  modePillText: {
+    fontFamily: 'Courier New',
+    fontSize: 10,
+    fontWeight: '900',
+    color: '#444444',
+  },
+  modePillTextActive: {
+    color: '#F5C518',
+  },
+  localBadge: {
+    backgroundColor: 'rgba(68,221,136,0.18)',
+    borderWidth: 1,
+    borderColor: COLORS.success,
+    borderRadius: 0,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+  },
+  localBadgeText: {
+    color: COLORS.success,
+    fontSize: 9,
+    fontFamily: 'Courier New',
+    fontWeight: '900',
+  },
+  rightHud: {
+    position: 'absolute',
+    right: 16,
+    top: '35%',
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    borderWidth: 1,
+    borderColor: '#1a1a1a',
+    padding: 8,
+    gap: 10,
+    zIndex: 100,
+  },
+  hudItem: {
+    alignItems: 'flex-end',
+  },
+  hudLabel: {
+    fontFamily: 'Courier New',
+    fontSize: 8,
+    color: '#333333',
+    fontWeight: '900',
+  },
+  hudValue: {
+    fontFamily: 'Courier New',
+    fontSize: 8,
+    color: '#F5C518',
+    fontWeight: '900',
   },
   bottomBar: {
     position: 'absolute',
