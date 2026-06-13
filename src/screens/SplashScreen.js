@@ -52,24 +52,26 @@ const SplashScreen = ({ navigation }) => {
       }),
     ]).start();
 
-    // After 2.5 seconds, navigate
+    // After animation, navigate based on onboarding status
     const timer = setTimeout(async () => {
       try {
         console.log('[SnapAct] SplashScreen: Checking first launch...');
         const checkPromise = isFirstLaunch();
         const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(true), 500));
         const first = await Promise.race([checkPromise, timeoutPromise]);
-        
+
         if (first) {
+          // First launch — go through onboarding flow
           navigation.replace('Onboarding');
         } else {
-          navigation.replace('Main');
+          // Returning user — jump straight to Camera (it IS the home now)
+          navigation.replace('Camera', { isHome: true });
         }
       } catch (error) {
         console.error('[SnapAct] SplashScreen: Navigation error:', error);
         navigation.replace('Onboarding');
       }
-    }, 2800);
+    }, 1500); // 1.5s for returning users — fast entry
 
     return () => clearTimeout(timer);
   }, []);

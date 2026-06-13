@@ -91,7 +91,7 @@ export const isFirstLaunch = async () => {
 };
 
 /**
- * Marks onboarding as complete so the app goes straight to Home next time
+ * Marks onboarding as complete so the app goes straight to Camera next time
  */
 export const setOnboarded = async () => {
   try {
@@ -100,5 +100,19 @@ export const setOnboarded = async () => {
   } catch (error) {
     console.error('storageService.setOnboarded error:', error);
     return false;
+  }
+};
+
+/**
+ * Returns the most recent scan result or null if history is empty.
+ */
+export const getLastScan = async () => {
+  try {
+    const data = await AsyncStorage.getItem(STORAGE_KEYS.SCAN_HISTORY);
+    const history = data ? JSON.parse(data) : [];
+    return history.length > 0 ? history[0] : null;
+  } catch (error) {
+    console.error('storageService.getLastScan error:', error);
+    return null;
   }
 };

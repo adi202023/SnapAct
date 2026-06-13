@@ -119,7 +119,7 @@ const ProfileSetupScreen = ({ navigation, route }) => {
     if (isEditMode) {
       navigation.goBack();
     } else {
-      navigation.replace('Main');
+      navigation.replace('Camera', { isHome: true });
     }
   };
 

@@ -11,13 +11,17 @@
       "resizeMode": "contain",
       "backgroundColor": "#0A0A0A"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.snapact.app",
       "infoPlist": {
         "NSCameraUsageDescription": "SnapAct needs camera access to scan medicines, menus, bills, and documents.",
-        "NSLocationWhenInUseUsageDescription": "SnapAct uses location to provide locally relevant bill complaint URLs."
+        "NSMicrophoneUsageDescription": "SnapAct uses the microphone for voice assistant features.",
+        "NSLocationWhenInUseUsageDescription": "SnapAct uses location to provide locally relevant bill complaint URLs.",
+        "NSSpeechRecognitionUsageDescription": "SnapAct uses speech recognition for voice commands."
       }
     },
     "android": {
@@ -29,7 +33,11 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.VIBRATE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE"
       ]
     },
     "web": {
@@ -39,9 +47,28 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "SnapAct needs camera access to scan and analyze content for you."
+          "cameraPermission": "SnapAct needs camera access to scan and analyze content for you.",
+          "microphonePermission": "SnapAct uses the microphone for voice assistant features.",
+          "recordAudioAndroid": true
+        }
+      ],
+      "expo-dev-client",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "newArchEnabled": false
+          },
+          "ios": {
+            "newArchEnabled": false
+          }
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "83839864-a5f2-47e2-ae2b-2a34f5c4bcba"
+      }
+    }
   }
 }

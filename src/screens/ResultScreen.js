@@ -20,7 +20,7 @@ import { COLORS } from '../constants/colors';
  * ResultScreen — redesigned in Raw Terminal / Precision Instrument style.
  */
 const ResultScreen = ({ navigation, route }) => {
-  const { result, mode } = route?.params || {};
+  const { result, mode, fromHome } = route?.params || {};
 
   const pillSlideAnim = useRef(new Animated.Value(-100)).current;
   const card1Opacity = useRef(new Animated.Value(0)).current;
@@ -317,10 +317,10 @@ const ResultScreen = ({ navigation, route }) => {
               style={styles.customActionBtnSecondary}
               onPress={() => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                navigation.navigate('Main');
+                navigation.navigate('Camera', { isHome: true });
               }}
             >
-              <Text style={styles.customActionTextSecondary}>RETURN TO CENTRAL HUB</Text>
+              <Text style={styles.customActionTextSecondary}>RETURN TO CAMERA HUB</Text>
               <Text style={styles.customActionArrowSecondary}>⌂</Text>
             </TouchableOpacity>
           </View>
